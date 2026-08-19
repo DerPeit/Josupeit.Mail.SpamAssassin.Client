@@ -10,7 +10,7 @@ A .NET library that speaks **spamc/spamd**, the HTTP-like request/response proto
 
 **The library owns no transport.** It never opens a socket, resolves a host or knows whether spamd is local or remote: it is handed a pair of streams - one to write the request to, one to read the response from - and speaks the protocol over them. TCP, a Unix domain socket, an stunnel-wrapped TLS connection or a `MemoryStream` in a test are all the same to it. That is a deliberate decision rather than an omission: the daemon may be anywhere, reached any number of ways, and a library that owned the socket would have to have an opinion about all of them.
 
-**Where it stands:** complete and covered by unit tests - all nine commands, both colours, the four message shapes, compression, and the failure paths. `test/…UnitTests` is 81 tests over a fake daemon and passes; the integration project against a real spamd is scaffolded but empty, and that is the next thing to write.
+**Where it stands:** complete and covered on both sides. `test/…UnitTests` is 88 tests over a fake daemon, `test/…IntegrationTests` is 17 against a real `spamd` in a container, and both pass. What is left is a first release.
 
 ## Build & test
 
@@ -22,7 +22,13 @@ dotnet test --filter "Name~Scan_reports_spam"                   # single test by
 dotnet tool restore                                             # once per clone; nbgv is a local tool
 ```
 
-**The integration tests require Docker.** `Josupeit.Mail.SpamAssassin.Client.IntegrationTests` uses Testcontainers to build an Ubuntu image carrying SpamAssassin (`Dockerfile.spamd`) and runs a real `spamd` the tests connect to. It starts with `--allow-tell`, without which every TELL is refused, and `--local`, which keeps the scan off the network so a score is stable enough to assert on; `local.cf` pins the rest of the scoring. `Josupeit.Mail.SpamAssassin.Client.UnitTests` is Docker-free and covers what a correct spamd never sends: truncated responses, a missing `Content-length`, a body shorter than the one announced, junk in the status line.
+**The integration tests require Docker**, and cost about two minutes: `SpamdFixture` builds an Ubuntu image carrying SpamAssassin (`Dockerfile.spamd`) and runs a real `spamd` for the length of the fixture - one container for the class, because starting the daemon means compiling the stock rule set. It starts with `--allow-tell`, without which every TELL is refused, and `--local`, which keeps the scan off the network so a score is stable enough to assert on; `local.cf` pins the rest of the scoring. Both the container and the built image are deleted on teardown, so a run leaves nothing behind - and pays for the image again next time.
+
+`TcpSpamdConnection` in that project is the transport this library deliberately does not ship, written the way a consumer would write it, which makes those tests a check on the connection abstraction as much as on the wire. **It is the same implementation the package readme shows; change one and change the other.**
+
+`Josupeit.Mail.SpamAssassin.Client.UnitTests` is Docker-free and covers what a correct spamd never sends: truncated responses, a missing `Content-length`, a body shorter than the one announced, junk in the status line.
+
+Two things about the integration suite that look like flakiness and are not. The **Bayes tests learn and then forget** the message they used, which is what keeps them from leaving state for the tests after them - and learning the same message twice legitimately changes nothing the second time, which is itself a test. And a daemon that cannot write its Bayes database answers **successfully** while changing nothing, so `A_message_can_be_learned_and_forgotten_again` prints spamd's own log on failure; that log is the only place the reason appears.
 
 **CI runs the unit tests only.** Codeberg's shared runners are container jobs with no Docker daemon of their own, so the integration half cannot run there - it is a local step before pushing, not a gate. `.forgejo/workflows/ci.yml` is the whole pipeline.
 

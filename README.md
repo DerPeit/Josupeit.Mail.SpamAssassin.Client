@@ -8,7 +8,7 @@ Hand over a message and get back what the command asked for: a spam verdict with
 
 ## Status
 
-The client is written and covered: all nine commands of protocol 1.5, each in a blocking and an awaited form, four ways of handing over a message, optional zlib compression, and 81 unit tests over a fake daemon. What is left is the integration suite against a real `spamd` in Docker, and a first release.
+The client is written and covered: all nine commands of protocol 1.5, each in a blocking and an awaited form, four ways of handing over a message, and optional zlib compression. 88 unit tests run against a fake daemon in about a tenth of a second; 17 integration tests run against a real `spamd` in a container. What is left is a first release.
 
 [CLAUDE.md](CLAUDE.md) describes how the pieces fit together and collects the protocol details that are easy to get wrong - several of which are not in SpamAssassin's own protocol document and were read out of `spamd` itself.
 
