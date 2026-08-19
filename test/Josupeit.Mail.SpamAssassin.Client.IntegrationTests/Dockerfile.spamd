@@ -1,0 +1,18 @@
+FROM ubuntu
+
+RUN export DEBIAN_FRONTEND=noninteractive \
+ && apt -yq update \
+ && apt -yq install spamassassin
+
+# --allow-tell is what the TELL tests need: without it spamd refuses to learn, forget, report or revoke
+# and answers with a protocol error instead. --local keeps every check off the network, which is what
+# makes a score deterministic enough to assert on.
+CMD [ "/usr/sbin/spamd", \
+      "--listen=0.0.0.0:783", \
+      "--allowed-ips=0.0.0.0/0", \
+      "--allow-tell", \
+      "--local", \
+      "--nouser-config", \
+      "--username=debian-spamd", \
+      "--syslog=stderr" ]
+EXPOSE 783

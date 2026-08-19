@@ -1,0 +1,15 @@
+# The scoring the integration tests assert against. Kept deliberately dull: a test that depends on the
+# stock rule set drifting is a test that fails on a Tuesday for no reason.
+
+required_score 5.0
+
+# 0 keeps the original message in the body rather than attaching it as a MIME part, so a PROCESS test can
+# still find its own text in what comes back.
+report_safe 0
+
+# No DNS, no Razor/Pyzor/DCC: the container has no network worth using and every lookup is a timeout.
+dns_available no
+skip_rbl_checks 1
+
+use_bayes 1
+bayes_auto_learn 0
