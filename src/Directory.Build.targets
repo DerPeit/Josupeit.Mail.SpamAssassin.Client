@@ -1,0 +1,57 @@
+<Project>
+
+  <!--
+    GenerateSBOM belongs here rather than in Directory.Build.props: props are evaluated before the project
+    body, where IsPackable is still the true this directory sets, so a project that opts out in its own
+    csproj would switch the SBOM on anyway and then fail to find a nupkg to attach it to. A targets file
+    is read after the body, so the condition sees the value the project actually settled on.
+  -->
+  <PropertyGroup>
+    <GenerateSBOM Condition="'$(IsPackable)' == 'true'">true</GenerateSBOM>
+  </PropertyGroup>
+
+  <!--
+    Generates PackageReleaseNotes from the commit subjects that touched this project since the previous
+    release tag, so the changelog is the git history rather than a file that drifts away from it. This is
+    why commit subjects follow Conventional Commits (see CONTRIBUTING.md) - they are read by consumers.
+    Requires git in PATH; failures are ignored and simply leave the notes empty.
+  -->
+  <Target Name="GeneratePackageReleaseNotes" BeforeTargets="GenerateNuspec"
+          Condition="'$(IsPackable)' == 'true' AND '$(PackageVersionTagPrefix)' != ''">
+
+    <PropertyGroup>
+      <_NullDevice Condition="'$(OS)' == 'Windows_NT'">nul</_NullDevice>
+      <_NullDevice Condition="'$(OS)' != 'Windows_NT'">/dev/null</_NullDevice>
+
+      <_GitFormatPercent Condition="'$(OS)' == 'Windows_NT'">%%</_GitFormatPercent>
+      <_GitFormatPercent Condition="'$(OS)' != 'Windows_NT'">%</_GitFormatPercent>
+    </PropertyGroup>
+
+    <Exec Command="git describe --tags --match &quot;$(PackageVersionTagPrefix)*&quot; --abbrev=0 HEAD~1 2&gt;$(_NullDevice)"
+          ConsoleToMSBuild="true"
+          IgnoreExitCode="true"
+          WorkingDirectory="$(MSBuildProjectDirectory)">
+      <Output TaskParameter="ConsoleOutput" PropertyName="_PreviousReleaseTag" />
+    </Exec>
+
+    <PropertyGroup>
+      <_PreviousReleaseTag>$(_PreviousReleaseTag.Trim())</_PreviousReleaseTag>
+
+      <_ReleaseNotesRange Condition="'$(_PreviousReleaseTag)' != ''">$(_PreviousReleaseTag)..HEAD</_ReleaseNotesRange>
+      <_ReleaseNotesRange Condition="'$(_PreviousReleaseTag)' == ''">HEAD</_ReleaseNotesRange>
+    </PropertyGroup>
+
+    <Exec Command="git log --pretty=format:&quot;- $(_GitFormatPercent)s&quot; $(_ReleaseNotesRange) -- $(PackageReleaseNotesGitPath)"
+          ConsoleToMSBuild="true"
+          IgnoreExitCode="true"
+          WorkingDirectory="$(MSBuildProjectDirectory)">
+      <Output TaskParameter="ConsoleOutput" ItemName="_PackageReleaseNoteLines" />
+    </Exec>
+
+    <PropertyGroup>
+      <PackageReleaseNotes>@(_PackageReleaseNoteLines, '%0a')</PackageReleaseNotes>
+    </PropertyGroup>
+
+  </Target>
+
+</Project>
