@@ -1,0 +1,30 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Description>A client for the spamc/spamd protocol, the HTTP-like request/response protocol SpamAssassin's scanning daemon speaks. Covers the full command set of protocol 1.5 - CHECK, SYMBOLS, REPORT, REPORT_IFSPAM, PROCESS, HEADERS, TELL, PING and SKIP - over any pair of streams, so the transport to a local or remote spamd stays the caller's choice.</Description>
+    <PackageTags>spamassassin spamc spamd spam-filter mail email antispam smtp</PackageTags>
+    <PackageVersionTagPrefix>v</PackageVersionTagPrefix>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Josupeit.Mail.SpamAssassin.Client.IntegrationTests" />
+    <InternalsVisibleTo Include="Josupeit.Mail.SpamAssassin.Client.UnitTests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      The one runtime dependency, and it earns it: both places this library has to hold bytes whose size it did not
+      choose - a compressed request, a report read back - are what a pooled stream exists for.
+    -->
+    <PackageReference Include="Microsoft.IO.RecyclableMemoryStream" Version="[3.0.1,4)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="ConfigureAwaitChecker.Analyzer" Version="5.0.0.1">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+</Project>
