@@ -1,0 +1,11 @@
+<Project>
+
+  <PropertyGroup>
+    <!--
+      Without this the code-style rules in .editorconfig only colour the editor: `dotnet build` and CI
+      ignore them entirely. With it, a naming violation is a build warning like any other.
+    -->
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+  </PropertyGroup>
+
+</Project>
