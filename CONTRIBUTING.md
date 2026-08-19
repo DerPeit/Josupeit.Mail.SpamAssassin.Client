@@ -97,7 +97,7 @@ An extra blank line between two groups of the _same_ kind is fine when it separa
 
 ### Async, and the synchronous twin
 
-- **`ConfigureAwait(false)` on every await** - enforced by `ConfigureAwaitChecker.Analyzer`; do not omit it.
+- **`ConfigureAwait(false)` on every await** - enforced by `ConfigureAwaitChecker.Analyzer`; do not omit it. In a library it is still a must, and this is a library: it cannot know what its caller awaits on. In application code it is typically redundant nowadays and is correspondingly rare in the wild, which is why the sample under `samples/` has none - a sample is user code, and it should look like the code a consumer actually writes. Do not add them back there.
 - **Every public operation exists twice**, and the synchronous half is **genuinely synchronous**: it calls `Stream.Read`/`Stream.Write`. `GetAwaiter().GetResult()` and `Task.Run(...).Result` are not implementations, they are deadlocks waiting for a host with a synchronization context.
 - **Write the protocol once.** Two copies of the request writer, one per colour, will drift within a month. Whatever seam is chosen to share the logic, it is the shared thing that gets the test coverage, and both entry points are asserted to produce byte-identical output.
 - **`Task` is the default; `ValueTask` has to earn its place.** This is Microsoft's own guidance and it is the rule here: the default choice for an asynchronous method is `Task`/`Task<T>`, and `ValueTask` is for cases where an analysis says it pays. "`ValueTask<T>` is never worse" is true only of the allocation, and the allocation is not the only cost:

@@ -16,4 +16,8 @@
     <Project Path="test/Josupeit.Mail.SpamAssassin.Client.UnitTests/Josupeit.Mail.SpamAssassin.Client.UnitTests.csproj" />
     <Project Path="test/Josupeit.Mail.SpamAssassin.Client.IntegrationTests/Josupeit.Mail.SpamAssassin.Client.IntegrationTests.csproj" />
   </Folder>
+  <Folder Name="/samples/">
+    <File Path="samples/Directory.Build.props" />
+    <Project Path="samples/Spamc/Spamc.csproj" />
+  </Folder>
 </Solution>

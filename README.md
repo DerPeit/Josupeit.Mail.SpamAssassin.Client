@@ -20,6 +20,19 @@ The client is written and covered: all nine commands of protocol 1.5, each in a 
 
 Targets `net8.0` and speaks protocol version **1.5**, which covers every command a current spamd implements.
 
+## The sample
+
+[`samples/Spamc`](samples/Spamc/README.md) is a working equivalent of SpamAssassin's own `spamc`, built on the library: it reads a message on stdin, asks `spamd` whatever the mode flag asked for, writes the answer on stdout, and reports the verdict in the exit code.
+
+```bash
+dotnet run --project samples/Spamc -- --help
+
+# Is it spam? Prints "score/threshold" and exits 1 for spam, 0 for ham.
+dotnet run --project samples/Spamc -- -c -d spamd.example.com < message.eml
+```
+
+It exists to show the parts a consumer has to supply - the socket, the exit codes, and what to do when the daemon is not there - and it is the shortest answer to "how do I use this". Its readme lists the `spamc` options it deliberately does not implement.
+
 ## Building and testing
 
 ```bash

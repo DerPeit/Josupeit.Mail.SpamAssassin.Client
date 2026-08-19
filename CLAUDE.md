@@ -20,11 +20,12 @@ dotnet test  Josupeit.Mail.SpamAssassin.Client.slnx
 dotnet test  test/Josupeit.Mail.SpamAssassin.Client.UnitTests   # the Docker-free half, seconds instead of minutes
 dotnet test --filter "Name~Scan_reports_spam"                   # single test by name
 dotnet tool restore                                             # once per clone; nbgv is a local tool
+dotnet run --project samples/Spamc -- --help                    # the sample; -- separates its arguments from dotnet's
 ```
 
 **The integration tests require Docker**, and cost about two minutes: `SpamdFixture` builds an Ubuntu image carrying SpamAssassin (`Dockerfile.spamd`) and runs a real `spamd` for the length of the fixture - one container for the class, because starting the daemon means compiling the stock rule set. It starts with `--allow-tell`, without which every TELL is refused, and `--local`, which keeps the scan off the network so a score is stable enough to assert on; `local.cf` pins the rest of the scoring. Both the container and the built image are deleted on teardown, so a run leaves nothing behind - and pays for the image again next time.
 
-`TcpSpamdConnection` in that project is the transport this library deliberately does not ship, written the way a consumer would write it, which makes those tests a check on the connection abstraction as much as on the wire. **It is the same implementation the package readme shows; change one and change the other.**
+`TcpSpamdConnection` in that project is the transport this library deliberately does not ship, written the way a consumer would write it, which makes those tests a check on the connection abstraction as much as on the wire. **It is the same implementation the package readme shows; change one and change the other.** The sample has a third copy, `SpamdConnection`, and it differs on purpose: it is over a `Socket` rather than a `TcpClient`, because a Unix domain socket is a `Socket` and `spamc -U` has to work. Keep the difference to that.
 
 `Josupeit.Mail.SpamAssassin.Client.UnitTests` is Docker-free and covers what a correct spamd never sends: truncated responses, a missing `Content-length`, a body shorter than the one announced, junk in the status line.
 
@@ -36,15 +37,20 @@ Two things about the integration suite that look like flakiness and are not. The
 
 ## Projects
 
-The tree is split two ways, and the split decides what a project inherits. `src/Directory.Build.props` carries everything to do with shipping a package, so anything under `src/` is packable unless it opts out; `test/Directory.Build.props` carries the test-runner packages and the reference to the library, so the test projects are nearly empty files. Both import the repository-wide `Directory.Build.props` by hand, because MSBuild reads only the nearest one.
+The tree is split three ways, and the split decides what a project inherits. `src/Directory.Build.props` carries everything to do with shipping a package, so anything under `src/` is packable unless it opts out; `test/Directory.Build.props` carries the test-runner packages and the reference to the library, so the test projects are nearly empty files; `samples/Directory.Build.props` carries the framework, the same reference, and `IsPackable=false`, because a sample that is packable turns up as a `.nupkg` in the directory the release step pushes from. All three import the repository-wide `Directory.Build.props` by hand, because MSBuild reads only the nearest one.
 
 | Project                                                   | TFM    | Role                                                                                   |
 | --------------------------------------------------------- | ------ | -------------------------------------------------------------------------------------- |
 | `src/Josupeit.Mail.SpamAssassin.Client`                   | net8.0 | The library, and the only package. Namespace root `Josupeit.Mail.SpamAssassin.Client`. |
 | `test/Josupeit.Mail.SpamAssassin.Client.UnitTests`        | net8.0 | NUnit tests over the wire format and the parser. No Docker.                            |
 | `test/Josupeit.Mail.SpamAssassin.Client.IntegrationTests` | net8.0 | NUnit + Testcontainers tests against a real spamd. Needs Docker.                       |
+| `samples/Spamc`                                           | net8.0 | A working `spamc` equivalent. `Exe`, assembly name `spamc`, namespace root `Spamc`.    |
 
-There is no samples project and no source generator: nothing here is generated, and nothing about the wire format would be better written by a generator than by hand.
+There is no source generator: nothing here is generated, and nothing about the wire format would be better written by a generator than by hand.
+
+**The sample is a `spamc` equivalent**, which is the one shape a sample of this library can take without inventing a use case: `spamc` is what consumers already know, and reproducing its behaviour forces every command, both failure policies and the exit codes into the open. It is the only project with a dependency the library does not have - `System.CommandLine` - and every type in it is `internal`, so nothing there needs a doc comment. What it deliberately leaves out, and why, is in `samples/Spamc/README.md`; the short version is that TLS, host randomization, retry policy and BSMTP are `spamc`'s own plumbing rather than anything about the protocol.
+
+Two things in it are the interesting reading. `SpamcRunner` is where **the safe fallback** lives - by default a message the daemon could not be asked about is written out unchanged and the run reports success, which is what `-x` exists to switch off - and it is also where the exit codes are, reusing `SpamAssassinResponseCode` because the codes the daemon sends and the codes `spamc` exits with are the same list, with `0` and `1` for ham and spam on top of it. The behaviour there is copied from `spamc/spamc.c` and `spamc/libspamc.c` rather than from the manual page, including the parts that look like oversights: `-K` and `-L` report a failure even under the safe fallback, `-C` does not.
 
 ## The agreed design
 

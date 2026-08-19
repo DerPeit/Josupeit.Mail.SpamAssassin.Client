@@ -1,0 +1,19 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+
+    <!-- So the thing that comes out is called what it imitates, and can be dropped in where spamc was. -->
+    <AssemblyName>spamc</AssemblyName>
+    <RootNamespace>Spamc</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      The one dependency the sample has and the library does not, and it says something that it is a command-line
+      parser: everything else here is either the library or the framework. Bounded range as everywhere else.
+    -->
+    <PackageReference Include="System.CommandLine" Version="[2.0.11,3)" />
+  </ItemGroup>
+
+</Project>
