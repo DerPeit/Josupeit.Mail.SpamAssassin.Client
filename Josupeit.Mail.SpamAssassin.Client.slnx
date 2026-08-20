@@ -1,0 +1,23 @@
+﻿<Solution>
+  <Folder Name="/Solution Items/">
+    <File Path="CLAUDE.md" />
+    <File Path="CONTRIBUTING.md" />
+    <File Path="Directory.Build.props" />
+    <File Path="LICENSE.md" />
+    <File Path="README.md" />
+  </Folder>
+  <Folder Name="/src/">
+    <File Path="src/Directory.Build.props" />
+    <File Path="src/Directory.Build.targets" />
+    <Project Path="src/Josupeit.Mail.SpamAssassin.Client/Josupeit.Mail.SpamAssassin.Client.csproj" />
+  </Folder>
+  <Folder Name="/test/">
+    <File Path="test/Directory.Build.props" />
+    <Project Path="test/Josupeit.Mail.SpamAssassin.Client.UnitTests/Josupeit.Mail.SpamAssassin.Client.UnitTests.csproj" />
+    <Project Path="test/Josupeit.Mail.SpamAssassin.Client.IntegrationTests/Josupeit.Mail.SpamAssassin.Client.IntegrationTests.csproj" />
+  </Folder>
+  <Folder Name="/samples/">
+    <File Path="samples/Directory.Build.props" />
+    <Project Path="samples/Spamc/Spamc.csproj" />
+  </Folder>
+</Solution>

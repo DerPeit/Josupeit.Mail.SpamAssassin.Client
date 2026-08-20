@@ -1,0 +1,27 @@
+﻿<Project>
+
+  <!-- See the note in src/Directory.Build.props: the repository-wide props file has to be imported by hand. -->
+  <Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)../'))" />
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+
+    <!--
+      A sample is here to be read and run, never installed. Without this it is packable by virtue of being a
+      project, and a solution-wide `dotnet pack` drops a spamc.1.0.0.nupkg into the same directory the release
+      step pushes from.
+    -->
+    <IsPackable>false</IsPackable>
+
+    <!-- Every type in a sample is internal, so there is no public surface to document and none to police. -->
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="$(MSBuildThisFileDirectory)..\src\Josupeit.Mail.SpamAssassin.Client\Josupeit.Mail.SpamAssassin.Client.csproj" />
+  </ItemGroup>
+
+</Project>

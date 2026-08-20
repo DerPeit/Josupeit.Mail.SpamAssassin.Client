@@ -1,0 +1,103 @@
+<Project>
+
+  <!--
+    MSBuild only picks up the *nearest* Directory.Build.props, so the repository-wide one has to be
+    imported by hand. Without this line the projects under src lose EnforceCodeStyleInBuild and the
+    style rules go back to only colouring the editor.
+  -->
+  <Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)../'))" />
+
+  <PropertyGroup>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <IsPackable>true</IsPackable>
+    <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <Authors>Manuel Josupeit-Walter</Authors>
+    <Company>Manuel Josupeit-Walter, Freelancing Developer</Company>
+    <Product>Manuel Josupeit-Walter, Mail Filtering</Product>
+    <Copyright>© 2026 Manuel Josupeit-Walter</Copyright>
+    <PackageLicenseExpression>EUPL-1.2</PackageLicenseExpression>
+    <PackageRequireLicenseAcceptance>true</PackageRequireLicenseAcceptance>
+    <PackageProjectUrl>https://codeberg.org/DerPeit/Josupeit.Mail.SpamAssassin.Client</PackageProjectUrl>
+    <RepositoryUrl>https://codeberg.org/DerPeit/Josupeit.Mail.SpamAssassin.Client</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageReadmeFile Condition="Exists('README.md')">README.md</PackageReadmeFile>
+    <PackageIcon Condition="Exists('$(MSBuildThisFileDirectory)..\assets\icon.png')">icon.png</PackageIcon>
+    <NeutralLanguage>en</NeutralLanguage>
+    <PackageVersionTagPrefix />
+    <!--
+      Which paths the release notes in Directory.Build.targets watch. Everything whose change alters what
+      a consumer receives, and nothing else - the project itself, the two files that shape the package,
+      and the packed icon. Tests and the workflow are absent on purpose.
+
+      They are pathspecs relative to the project directory, so "." is
+      src\Josupeit.Mail.SpamAssassin.Client rather than src.
+    -->
+    <PackageReleaseNotesGitPath>. ../Directory.Build.props ../Directory.Build.targets ../../Directory.Build.props ../../assets/icon.png</PackageReleaseNotesGitPath>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <!--
+      The doc file is what makes a missing or incomplete doc comment visible at all: it switches on
+      CS1591 (undocumented public member), CS1573 (a parameter without its own param tag) and their
+      siblings. Neither is suppressed - see CONTRIBUTING.md for the rule they enforce.
+    -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <!--
+      Ship the sources with the package so a consumer can step into this code instead of guessing at
+      it. SourceLink is the part that has to be said out loud: the SDK contributes a provider on its own
+      for each host it knows, and Gitea is not one of them - so Codeberg needs Microsoft.SourceLink.Gitea
+      and the SourceLinkGiteaHost item below. Forget either and nothing fails; the package just quietly
+      loses source stepping.
+    -->
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <Deterministic>true</Deterministic>
+    <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <IncludeSource>true</IncludeSource>
+    <NoWarn>$(NoWarn);NETSDK1138;NETSDK1215</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Names the host so SourceLink knows codeberg.org is a Gitea instance and not some unknown domain. -->
+    <SourceLinkGiteaHost Include="codeberg.org" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" Condition="Exists('README.md')" />
+    <None Include="$(MSBuildThisFileDirectory)..\LICENSE.md" Pack="true" PackagePath="\" Link="LICENSE.md" Visible="false" />
+
+    <!-- 256x256, not a master of some larger size: NuGet caps a package icon at 1 MB. -->
+    <None Include="$(MSBuildThisFileDirectory)..\assets\icon.png" Pack="true" PackagePath="\" Link="icon.png" Visible="false"
+          Condition="Exists('$(MSBuildThisFileDirectory)..\assets\icon.png')" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      Bounded ranges as everywhere else, but note the lower bound has to be a version that exists: NuGet
+      resolves a range to its *lowest* satisfying version, so "[3,4)" would pull Nerdbank.GitVersioning
+      3.0.24, whose LibGit2Sharp cannot even load on a current runtime.
+    -->
+    <PackageReference Include="Microsoft.Sbom.Targets" Version="[4.0.2,5)">
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+
+    <PackageReference Include="Microsoft.SourceLink.Gitea" Version="[10.0.400,11)">
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+
+    <PackageReference Include="Nerdbank.GitVersioning" Version="[3.9.50,4)">
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+  </ItemGroup>
+
+</Project>

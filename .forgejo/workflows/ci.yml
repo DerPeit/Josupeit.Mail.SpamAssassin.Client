@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  ci:
+    runs-on: codeberg-medium-lazy
+    container:
+      image: mcr.microsoft.com/dotnet/sdk:10.0
+    env:
+      # Everything here targets net8.0 and the SDK image carries only the 10.0 runtime, so the test
+      # host finds no 8.0.x to start on. Rolling forward is the way out that keeps the modern SDK -
+      # pinning the image to 8.0 instead would lose .slnx and the language version the code is on.
+      DOTNET_ROLL_FORWARD: Major
+    steps:
+      # actions/checkout is not available on Codeberg's runners, so the clone is by hand. It has to
+      # stay a *full* clone: Nerdbank.GitVersioning derives the version from the commit height, and a
+      # shallow one produces a wrong version, or none at all.
+      - name: Checkout
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git clone "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" .
+          git checkout "$GITHUB_REF_NAME"
+
+      - name: Restore local tools
+        run: dotnet tool restore
+
+      - name: Build
+        run: dotnet build --configuration Release
+
+      # The unit tests only. Josupeit.Mail.SpamAssassin.Client.IntegrationTests drives a real spamd
+      # through Testcontainers and needs a Docker daemon of its own, which the shared runners do not
+      # hand out - so that half of the suite is run locally before pushing rather than here.
+      # See CONTRIBUTING.md.
+      - name: Unit tests
+        run: dotnet test test/Josupeit.Mail.SpamAssassin.Client.UnitTests --configuration Release --no-build
+
+      # The project, not the solution: a solution-wide pack sweeps up everything packable, and
+      # "packages/*.nupkg" in the next step would then push it.
+      - name: Pack
+        if: github.ref == 'refs/heads/main'
+        run: dotnet pack src/Josupeit.Mail.SpamAssassin.Client --configuration Release --no-build --output packages
+
+      - name: Push to NuGet
+        if: github.ref == 'refs/heads/main'
+        run: >-
+          dotnet nuget push "packages/*.nupkg"
+          --source https://api.nuget.org/v3/index.json
+          --api-key "${{ secrets.NUGET_API_KEY }}"
+          --skip-duplicate
