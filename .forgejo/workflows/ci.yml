@@ -32,6 +32,10 @@ jobs:
       - name: Build
         run: dotnet build --configuration Release
 
+      # After the build: its inventory is the XML documentation file the build writes.
+      - name: Check LLM documentation
+        run: bash scripts/check-llms-docs.sh
+
       # The unit tests only. Josupeit.Mail.SpamAssassin.Client.IntegrationTests drives a real spamd
       # through Testcontainers and needs a Docker daemon of its own, which the shared runners do not
       # hand out - so that half of the suite is run locally before pushing rather than here.

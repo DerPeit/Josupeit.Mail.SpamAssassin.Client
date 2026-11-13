@@ -35,8 +35,9 @@ namespace Josupeit.Mail.SpamAssassin.Client;
 /// <item>
 /// <description>
 /// <see cref="Stream"/> with an explicit length - for a stream that cannot seek but whose length the caller
-/// knows anyway. Nothing is buffered, and the caller carries the promise: a length that turns out to be wrong
-/// makes the daemon answer <see cref="SpamAssassinResponseCode.Protocol"/>.
+/// knows anyway. Nothing is buffered, and the caller carries the promise: exactly that many bytes are sent, so a
+/// stream that ends sooner throws <see cref="EndOfStreamException"/>, and one that goes on longer is cut short
+/// and the daemon scans only what it was sent.
 /// </description>
 /// </item>
 /// <item>
@@ -118,6 +119,7 @@ public interface ISpamAssassinClient
     /// <exception cref="ArgumentNullException"><paramref name="message"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException"><paramref name="message"/> cannot be read from.</exception>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="length"/> is negative.</exception>
+    /// <exception cref="EndOfStreamException"><paramref name="message"/> ended before <paramref name="length"/> bytes were sent. By then the request is half written, and the connection is disposed without a response.</exception>
     SpamVerdict Scan(Stream message, long length);
 
     /// <summary>
@@ -174,6 +176,7 @@ public interface ISpamAssassinClient
     /// <exception cref="ArgumentNullException"><paramref name="message"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException"><paramref name="message"/> cannot be read from.</exception>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="length"/> is negative.</exception>
+    /// <exception cref="EndOfStreamException"><paramref name="message"/> ended before <paramref name="length"/> bytes were sent. By then the request is half written, and the connection is disposed without a response.</exception>
     SymbolsResult Symbols(Stream message, long length);
 
     /// <summary>
@@ -229,6 +232,7 @@ public interface ISpamAssassinClient
     /// <exception cref="ArgumentNullException"><paramref name="message"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException"><paramref name="message"/> cannot be read from.</exception>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="length"/> is negative.</exception>
+    /// <exception cref="EndOfStreamException"><paramref name="message"/> ended before <paramref name="length"/> bytes were sent. By then the request is half written, and the connection is disposed without a response.</exception>
     ReportResult Report(Stream message, long length);
 
     /// <summary>
@@ -285,6 +289,7 @@ public interface ISpamAssassinClient
     /// <exception cref="ArgumentNullException"><paramref name="message"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException"><paramref name="message"/> cannot be read from.</exception>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="length"/> is negative.</exception>
+    /// <exception cref="EndOfStreamException"><paramref name="message"/> ended before <paramref name="length"/> bytes were sent. By then the request is half written, and the connection is disposed without a response.</exception>
     ReportResult ReportIfSpam(Stream message, long length);
 
     /// <summary>
@@ -343,6 +348,7 @@ public interface ISpamAssassinClient
     /// <exception cref="ArgumentNullException"><paramref name="message"/> or <paramref name="destination"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException"><paramref name="message"/> cannot be read from, or <paramref name="destination"/> cannot be written to.</exception>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="length"/> is negative.</exception>
+    /// <exception cref="EndOfStreamException"><paramref name="message"/> ended before <paramref name="length"/> bytes were sent. By then the request is half written, and the connection is disposed without a response.</exception>
     RewriteResult Process(Stream message, long length, Stream destination);
 
     /// <summary>
@@ -410,6 +416,7 @@ public interface ISpamAssassinClient
     /// <exception cref="ArgumentNullException"><paramref name="message"/> or <paramref name="destination"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException"><paramref name="message"/> cannot be read from, or <paramref name="destination"/> cannot be written to.</exception>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="length"/> is negative.</exception>
+    /// <exception cref="EndOfStreamException"><paramref name="message"/> ended before <paramref name="length"/> bytes were sent. By then the request is half written, and the connection is disposed without a response.</exception>
     RewriteResult Headers(Stream message, long length, Stream destination);
 
     /// <summary>
@@ -476,6 +483,7 @@ public interface ISpamAssassinClient
     /// <exception cref="ArgumentNullException"><paramref name="instruction"/> or <paramref name="message"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException"><paramref name="message"/> cannot be read from.</exception>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="length"/> is negative.</exception>
+    /// <exception cref="EndOfStreamException"><paramref name="message"/> ended before <paramref name="length"/> bytes were sent. By then the request is half written, and the connection is disposed without a response.</exception>
     TellResult Tell(TellInstruction instruction, Stream message, long length);
 
     /// <summary>

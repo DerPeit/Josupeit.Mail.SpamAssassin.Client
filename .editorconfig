@@ -36,6 +36,14 @@ end_of_line = crlf
 trim_trailing_whitespace = false
 insert_final_newline = false
 
+# Markdown under a .txt name, because llmstxt.org fixes the file names. After [*.txt] so it wins there:
+# prettier formats these and ends them with a newline, which the fixture rule above would strip.
+[{llms.txt,llms-full.txt}]
+indent_size = 2
+end_of_line = crlf
+trim_trailing_whitespace = false
+insert_final_newline = true
+
 [*.cs]
 indent_size = 4
 tab_width = 4

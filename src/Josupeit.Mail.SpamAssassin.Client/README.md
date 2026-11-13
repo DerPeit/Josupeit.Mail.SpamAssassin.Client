@@ -6,7 +6,7 @@ A client for the **spamc/spamd protocol** - the HTTP-like request/response proto
 dotnet add package Josupeit.Mail.SpamAssassin.Client
 ```
 
-Targets `net8.0`, announces protocol version **1.5**, and covers the full command set: `CHECK`, `SYMBOLS`, `REPORT`, `REPORT_IFSPAM`, `PROCESS`, `HEADERS`, `TELL`, `PING` and `SKIP`. Every operation comes in two colours - an `async` one and a genuinely blocking one - and the package depends on nothing outside the framework.
+Targets `net8.0`, announces protocol version **1.5**, and covers the full command set: `CHECK`, `SYMBOLS`, `REPORT`, `REPORT_IFSPAM`, `PROCESS`, `HEADERS`, `TELL`, `PING` and `SKIP`. Every operation comes in two colours - an `async` one and a genuinely blocking one - and the package depends on nothing outside the framework but `Microsoft.IO.RecyclableMemoryStream`, which pools the buffers it cannot avoid.
 
 ## The transport is yours
 

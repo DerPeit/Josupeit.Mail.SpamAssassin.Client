@@ -2,8 +2,8 @@
 #
 # Everything is normalized to LF in the repository. The working tree gets CRLF for the files a Windows editor
 # touches - which is what .editorconfig declares - and LF for the two kinds that are read inside the Linux
-# container, where a stray CR is taken as part of the value rather than as encoding, and for the hook, which is a
-# shell script that has to run on a clone of any platform.
+# container, where a stray CR is taken as part of the value rather than as encoding, and for the hook and the
+# scripts, which are shell scripts that have to run on a clone of any platform.
 #
 # Keep this in step with .editorconfig: where both name a file type, they must say the same thing.
 
@@ -15,6 +15,8 @@
 *.props text eol=crlf
 *.targets text eol=crlf
 *.md text eol=crlf
+llms.txt text eol=crlf
+llms-full.txt text eol=crlf
 *.json text eol=crlf
 *.yml text eol=crlf
 .editorconfig text eol=crlf
@@ -23,5 +25,6 @@
 Dockerfile* text eol=lf
 *.cf text eol=lf
 .githooks/** text eol=lf
+*.sh text eol=lf
 
 *.png binary

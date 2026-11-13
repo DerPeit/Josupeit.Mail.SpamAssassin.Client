@@ -1,0 +1,30 @@
+{
+  "$schema": "https://context7.com/schema/context7.json",
+  "url": "https://context7.com/git_codeberg_org/derpeit_josupeit.mail.spamassassin.client",
+  "public_key": "pk_wvFRsoyy9eT9HlocS6LH6",
+  "projectTitle": "Josupeit.Mail.SpamAssassin.Client",
+  "description": "A .NET client for SpamAssassin's spamc/spamd protocol: scan, symbols, report, process, headers, Bayes learning through TELL, ping. Brings no transport of its own - you supply the streams. Async and genuinely blocking, net8.0.",
+  "branch": "main",
+  "folders": [],
+  "excludeFolders": [
+    ".claude",
+    ".config",
+    ".forgejo",
+    ".githooks",
+    ".idea",
+    ".vs",
+    "artifacts",
+    "assets",
+    "scripts",
+    "test"
+  ],
+  "excludeFiles": ["CLAUDE.md", "CONTRIBUTING.md"],
+  "rules": [
+    "There is no host/port API. Implement ISpamAssassinConnection (RequestStream, ResponseStream, Dispose, DisposeAsync) and pass SpamAssassinClient an ISpamAssassinConnectionSource or a connect/connectAsync delegate pair.",
+    "spamd serves one command per connection: return a new connection from every Connect/ConnectAsync call and never cache one. The client disposes it. SpamAssassinClient itself is not IDisposable; register it as a singleton.",
+    "Methods are ScanAsync (CHECK), SymbolsAsync, ReportAsync, ReportIfSpamAsync, ProcessAsync, HeadersAsync, TellAsync, PingAsync, SkipAsync. Each blocking twin (Scan, ...) takes no CancellationToken.",
+    "A plain Stream message must be seekable; otherwise pass its length or a byte[]/ReadOnlyMemory<byte>. ProcessAsync/HeadersAsync copy the result into a destination Stream you pass and do not rewind it.",
+    "Learn and forget with TellAsync(TellInstruction.LearnAsSpam|LearnAsHam|Forget|ReportAsSpam|RevokeAsHam, message). A TELL that changed nothing is a TellResult, not an exception; spamd needs --allow-tell.",
+    "Read src/Josupeit.Mail.SpamAssassin.Client/llms-full.txt for exact signatures before writing code; do not infer members that are not listed there."
+  ]
+}

@@ -74,6 +74,9 @@
 
   <ItemGroup>
     <None Include="README.md" Pack="true" PackagePath="\" Condition="Exists('README.md')" />
+
+    <None Include="llms.txt" Pack="true" PackagePath="\" Condition="Exists('llms.txt')" />
+    <None Include="llms-full.txt" Pack="true" PackagePath="\" Condition="Exists('llms-full.txt')" />
     <None Include="$(MSBuildThisFileDirectory)..\LICENSE.md" Pack="true" PackagePath="\" Link="LICENSE.md" Visible="false" />
 
     <!-- 256x256, not a master of some larger size: NuGet caps a package icon at 1 MB. -->

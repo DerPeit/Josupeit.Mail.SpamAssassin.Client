@@ -1,0 +1,27 @@
+# Josupeit.Mail.SpamAssassin.Client
+
+> .NET client for spamc/spamd, the request/response protocol of SpamAssassin's scanning daemon. Hand a message to `SpamAssassinClient` and get back the verdict, the rules that hit, the report, or the rewritten message; teach the daemon's Bayes database through `TellAsync`. The library owns no transport: it is constructed with a connection source that returns a pair of streams per call, so TCP, a Unix domain socket or TLS stay the caller's choice. Every operation has an async and a genuinely blocking form. Targets net8.0, speaks protocol 1.5, one runtime dependency (Microsoft.IO.RecyclableMemoryStream), namespace `Josupeit.Mail.SpamAssassin.Client`, licensed EUPL-1.2.
+
+Install with `dotnet add package Josupeit.Mail.SpamAssassin.Client`. Every public type lives in the `Josupeit.Mail.SpamAssassin.Client` namespace. What exists:
+
+- `ISpamAssassinClient` / `SpamAssassinClient` - one method per command, each blocking and `Async`, each taking the message as `Stream` (must seek), `Stream` plus `long length`, `ReadOnlySequence<byte>` or `ReadOnlyMemory<byte>`: `Scan`/`ScanAsync` (CHECK) -> `SpamVerdict`; `Symbols`/`SymbolsAsync` -> `SymbolsResult`; `Report`/`ReportAsync` and `ReportIfSpam`/`ReportIfSpamAsync` -> `ReportResult`; `Process`/`ProcessAsync` and `Headers`/`HeadersAsync` (message, destination stream) -> `RewriteResult`; `Tell`/`TellAsync` (instruction, message) -> `TellResult`; `Ping`/`PingAsync` -> `Version`; `Skip`/`SkipAsync`
+- `new SpamAssassinClient(ISpamAssassinConnectionSource connections, SpamAssassinClientOptions? options = null)` or `new SpamAssassinClient(Func<ISpamAssassinConnection> connect, Func<CancellationToken, Task<ISpamAssassinConnection>> connectAsync, SpamAssassinClientOptions? options = null)`
+- `ISpamAssassinConnection` - what the caller implements: `RequestStream`, `ResponseStream`, `CompleteRequest`/`CompleteRequestAsync` (default flushes; on a socket, shut down the sending half), `Dispose`, `DisposeAsync`; `ISpamAssassinConnectionSource` - `Connect`, `ConnectAsync`
+- `SpamAssassinClientOptions` - `User` (`[-A-Za-z0-9_]` only), `CompressRequests`, `ProtocolVersion` (1.2 to 1.5), `TextEncoding`, `MaxResponseHeadLength`, `MaxTextResponseLength`, `TransferBufferSize`
+- results `SpamVerdict(IsSpam, Score, Threshold)`, `SymbolsResult(Verdict, Symbols)`, `ReportResult(Verdict, Report)`, `RewriteResult(Verdict, Length)`, `TellResult(Set, Removed)`; `TellInstruction.LearnAsSpam`, `LearnAsHam`, `Forget`, `ReportAsSpam`, `RevokeAsHam`, `Create(...)`; enums `TellDatabases`, `MessageClass`, `SpamAssassinResponseCode`
+- exceptions: abstract `SpamAssassinException`; `ErrorResponseSpamAssassinException` (daemon refused, has `Code`), `MalformedResponseSpamAssassinException`, `TruncatedResponseSpamAssassinException`, `ResponseTooLargeSpamAssassinException`
+
+There is no constructor taking a host or port, no DI extension, no `ILogger`, and the client is not `IDisposable`. spamd serves one command per connection, so the client asks for a fresh connection on every call and disposes it before returning; return a new one from every `Connect`. Blocking methods take no `CancellationToken`. `Process`/`Headers` write the rewritten message into the caller's destination stream and do not rewind it. `ReportIfSpam` returns a `null` report for ham. A `TELL` that changed nothing is a successful `TellResult`, not an exception, and needs `spamd --allow-tell`. Stream and socket failures are not wrapped in `SpamAssassinException`.
+
+## Documentation
+
+- [Complete reference](https://codeberg.org/DerPeit/Josupeit.Mail.SpamAssassin.Client/raw/branch/main/src/Josupeit.Mail.SpamAssassin.Client/llms-full.txt): concepts, every public type with its exact C# declaration, a command-choosing guide, the runtime contract, usage recipes (TCP and Unix domain socket connections, Bayes learning, retries, DI, testing), and common mistakes. Load this to write code against the package.
+- [README](https://codeberg.org/DerPeit/Josupeit.Mail.SpamAssassin.Client/raw/branch/main/src/Josupeit.Mail.SpamAssassin.Client/README.md): human-oriented package overview as shown on NuGet.
+
+## Optional
+
+- [Repository overview](https://codeberg.org/DerPeit/Josupeit.Mail.SpamAssassin.Client/raw/branch/main/README.md): building, testing, contributing.
+- [spamc sample](https://codeberg.org/DerPeit/Josupeit.Mail.SpamAssassin.Client/src/branch/main/samples/Spamc): a working `spamc` equivalent built on the library.
+- [Source code](https://codeberg.org/DerPeit/Josupeit.Mail.SpamAssassin.Client/src/branch/main/src/Josupeit.Mail.SpamAssassin.Client): the library on Codeberg.
+- [NuGet package](https://www.nuget.org/packages/Josupeit.Mail.SpamAssassin.Client): release history.
+- [License](https://codeberg.org/DerPeit/Josupeit.Mail.SpamAssassin.Client/raw/branch/main/LICENSE.md): EUPL-1.2 full text.
