@@ -10,7 +10,7 @@ A .NET library that speaks **spamc/spamd**, the HTTP-like request/response proto
 
 **The library owns no transport.** It never opens a socket, resolves a host or knows whether spamd is local or remote: it is handed a pair of streams - one to write the request to, one to read the response from - and speaks the protocol over them. TCP, a Unix domain socket, an stunnel-wrapped TLS connection or a `MemoryStream` in a test are all the same to it. That is a deliberate decision rather than an omission: the daemon may be anywhere, reached any number of ways, and a library that owned the socket would have to have an opinion about all of them.
 
-**Where it stands:** complete and covered on both sides. `test/…UnitTests` is 88 tests over a fake daemon, `test/…IntegrationTests` is 17 against a real `spamd` in a container, and both pass. What is left is a first release.
+**Where it stands:** complete and covered on both sides. `test/…UnitTests` is 154 tests over a fake daemon, `test/…IntegrationTests` is 17 against a real `spamd` in a container, and both pass. It is released on NuGet.
 
 ## Build & test
 
