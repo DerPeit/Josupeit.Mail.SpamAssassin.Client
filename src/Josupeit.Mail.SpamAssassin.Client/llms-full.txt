@@ -1,0 +1,933 @@
+# Josupeit.Mail.SpamAssassin.Client
+
+> .NET client for spamc/spamd, the request/response protocol of SpamAssassin's scanning daemon. Hand a message to `SpamAssassinClient` and get back the verdict, the rules that hit, the report, or the rewritten message; teach the daemon's Bayes database through `TellAsync`. The library owns no transport: it is constructed with a connection source that returns a pair of streams per call, so TCP, a Unix domain socket or TLS stay the caller's choice. Every operation has an async and a genuinely blocking form. Targets net8.0, speaks protocol 1.5, one runtime dependency (Microsoft.IO.RecyclableMemoryStream), namespace `Josupeit.Mail.SpamAssassin.Client`, licensed EUPL-1.2.
+
+## At a glance
+
+- **Package:** `Josupeit.Mail.SpamAssassin.Client`
+- **Namespace:** `Josupeit.Mail.SpamAssassin.Client`, and only that one. Every public type lives there; there are no sub-namespaces to import.
+- **Target framework:** `net8.0` only.
+- **Protocol:** spamc/spamd protocol 1.5 by default, configurable down to 1.2. All nine commands: `CHECK`, `SYMBOLS`, `REPORT`, `REPORT_IFSPAM`, `PROCESS`, `HEADERS`, `TELL`, `PING`, `SKIP`.
+- **Transport:** none. The library never opens a socket, resolves a host name or reads a port. The caller implements `ISpamAssassinConnection` (two streams) and supplies connections through `ISpamAssassinConnectionSource` or a pair of delegates. There is no constructor taking a host, a port, a URI or a connection string.
+- **Two colours of every operation:** `ScanAsync` awaits and takes a `CancellationToken`; `Scan` blocks on `Stream.Read`/`Stream.Write` and takes no token. The blocking form is not sync-over-async.
+- **Dependencies:** `Microsoft.IO.RecyclableMemoryStream` and nothing else at runtime. No `Microsoft.Extensions.*`: no `AddSpamAssassin...` DI extension, no `ILogger`, no `IOptions<T>` binding. Register it yourself (see "Usage").
+- **Nullability:** every declaration in this document is shown as compiled under `#nullable enable`. An unannotated reference type is non-nullable; nullable members carry `?`.
+- **Authoritative inventory:** the XML documentation file `Josupeit.Mail.SpamAssassin.Client.xml` beside the assembly in the package (`lib/net8.0/`). The build fails on an undocumented public member (CS1591), so that file lists every public type and member. This document mentions every one of them.
+- **This document:** ships inside the NuGet package as `llms-full.txt` and is published at https://codeberg.org/DerPeit/Josupeit.Mail.SpamAssassin.Client/raw/branch/main/src/Josupeit.Mail.SpamAssassin.Client/llms-full.txt. The packaged copy matches its package version; the published copy describes the latest release.
+- **License:** EUPL-1.2
+
+Install:
+
+```
+dotnet add package Josupeit.Mail.SpamAssassin.Client
+```
+
+## Concepts
+
+`spamd` is SpamAssassin's scanning daemon. A client connects, writes one request (a command line, headers, a blank line and the message), and reads one response (a status line, headers, a blank line and, for some commands, a body). Then the daemon closes the connection. **One command per connection** is the protocol, not a limitation of this library: there is no keep-alive and no pipelining.
+
+The library maps that onto four ideas:
+
+- **The transport is yours.** `ISpamAssassinConnection` is two streams (`RequestStream`, `ResponseStream`, usually the same `NetworkStream` twice) plus a way to say "request finished" and to be disposed. Where they come from is the implementer's business: TCP, a Unix domain socket, stunnel, or a pair of `MemoryStream`s in a test.
+- **A connection per call.** `SpamAssassinClient` is built with a _source_ of connections, not a connection. Every method call asks the source for a fresh connection, runs one exchange and disposes the connection before returning. One client instance therefore serves any number of calls, and is safe to share (a singleton is the intended lifetime) as long as the source can be called concurrently.
+- **One method per command.** `Scan` (`CHECK`), `Symbols`, `Report`, `ReportIfSpam`, `Process`, `Headers`, `Tell`, `Ping`, `Skip`, each in a blocking and an `Async` form. There is no `SendAsync(command)` and no builder.
+- **A verdict from every scanning command.** `CHECK`, `SYMBOLS`, `REPORT`, `REPORT_IFSPAM`, `PROCESS` and `HEADERS` all answer with the `Spam:` header, so every result type carries a `SpamVerdict` (`IsSpam`, `Score`, `Threshold`). `TELL`, `PING` and `SKIP` produce no verdict.
+
+A message is handed over in one of four shapes, because spamd must be told the length _before_ the body:
+
+| Overload                         | Length comes from                                    | Buffered?           |
+| -------------------------------- | ---------------------------------------------------- | ------------------- |
+| `Stream message`                 | `message.Length - message.Position`; needs `CanSeek` | No                  |
+| `Stream message, long length`    | the caller, who vouches for it; any readable stream  | No                  |
+| `ReadOnlySequence<byte> message` | the sequence                                         | No (no copy either) |
+| `ReadOnlyMemory<byte> message`   | the memory; a `byte[]` converts implicitly           | No (no copy either) |
+
+With `SpamAssassinClientOptions.CompressRequests` on, every overload buffers the compressed body, because `Content-length` must be the compressed length.
+
+Commands that rewrite the message (`PROCESS`, `HEADERS`) do not return it. They copy it into a **destination stream the caller supplies**, as it arrives, and return a `RewriteResult` holding the verdict and the number of bytes written. The destination is neither closed nor rewound.
+
+A non-zero response code is a refusal with no body behind it and surfaces as `ErrorResponseSpamAssassinException`. A response that cannot be read surfaces as one of three other `SpamAssassinException` types. Failures of the caller's own streams (`IOException`, `SocketException`, `EndOfStreamException`, `OperationCanceledException`) are **not wrapped**.
+
+## Quick start
+
+The library ships no transport, so a consumer writes this once. A TCP connection to spamd:
+
+```csharp
+using System.IO;
+using System.Net.Sockets;
+using System.Threading;
+using System.Threading.Tasks;
+using Josupeit.Mail.SpamAssassin.Client;
+
+internal sealed class TcpSpamdConnection(TcpClient socket) : ISpamAssassinConnection
+{
+    private readonly NetworkStream _stream = socket.GetStream();
+
+    public Stream RequestStream => _stream;
+
+    public Stream ResponseStream => _stream;
+
+    // The default only flushes. On a socket there is more to say: shutting down the sending half is how the
+    // protocol expects a client to announce that its request is finished.
+    public void CompleteRequest() => socket.Client.Shutdown(SocketShutdown.Send);
+
+    public Task CompleteRequestAsync(CancellationToken cancellationToken = default)
+    {
+        CompleteRequest();
+
+        return Task.CompletedTask;
+    }
+
+    public void Dispose() => socket.Dispose();
+
+    public ValueTask DisposeAsync()
+    {
+        socket.Dispose();
+
+        return default;
+    }
+}
+```
+
+Build one client and reuse it. Both delegates are required: the blocking methods call `connect`, the `Async` ones call `connectAsync`.
+
+```csharp
+using System;
+using System.IO;
+using System.Net.Sockets;
+using System.Threading.Tasks;
+using Josupeit.Mail.SpamAssassin.Client;
+
+var client = new SpamAssassinClient(
+    connect: () => new TcpSpamdConnection(new TcpClient("spamd.example.com", 783)),
+    connectAsync: async cancellationToken =>
+    {
+        var socket = new TcpClient();
+
+        try
+        {
+            await socket.ConnectAsync("spamd.example.com", 783, cancellationToken);
+
+            return new TcpSpamdConnection(socket);
+        }
+        catch
+        {
+            // The client only ever disposes a connection it was handed, so a socket that failed to connect is ours.
+            socket.Dispose();
+
+            throw;
+        }
+    });
+
+byte[] message = await File.ReadAllBytesAsync("incoming.eml");
+
+SpamVerdict verdict = await client.ScanAsync(message);
+
+Console.WriteLine(verdict.IsSpam
+    ? $"Spam: {verdict.Score} of {verdict.Threshold}"
+    : $"Ham: {verdict.Score} of {verdict.Threshold}");
+```
+
+`ScanAsync(message)` with a `byte[]` binds to the `ReadOnlyMemory<byte>` overload. 783 is spamd's default port. The daemon must listen on an address the caller can reach (`spamd --listen`, `--allowed-ips`).
+
+## Type catalog
+
+| Type                                                                                                                                                              | Kind                   | Role                                                                    |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- | ----------------------------------------------------------------------- |
+| `ISpamAssassinClient`                                                                                                                                             | interface              | The nine commands, each blocking and `Async`; mock this in tests        |
+| `SpamAssassinClient`                                                                                                                                              | sealed class           | The implementation; two constructors, nothing else of its own           |
+| `ISpamAssassinConnection`                                                                                                                                         | interface              | One conversation: request stream, response stream, completion, disposal |
+| `ISpamAssassinConnectionSource`                                                                                                                                   | interface              | Where the client gets a connection, once per call                       |
+| `SpamAssassinClientOptions`                                                                                                                                       | sealed record          | User, compression, protocol version, text encoding, response limits     |
+| `SpamVerdict`                                                                                                                                                     | readonly record struct | `IsSpam`, `Score`, `Threshold`                                          |
+| `SymbolsResult`, `ReportResult`, `RewriteResult`, `TellResult`                                                                                                    | sealed records         | What each command returns                                               |
+| `TellInstruction`                                                                                                                                                 | sealed record          | What a `TELL` does; five named instances and `Create`                   |
+| `TellDatabases`                                                                                                                                                   | `[Flags]` enum         | `None`, `Local`, `Remote`                                               |
+| `MessageClass`                                                                                                                                                    | enum                   | `Spam`, `Ham`                                                           |
+| `SpamAssassinResponseCode`                                                                                                                                        | enum                   | The `sysexits.h` codes on the status line                               |
+| `SpamAssassinException`                                                                                                                                           | abstract class         | Base of every failure on the daemon's side                              |
+| `ErrorResponseSpamAssassinException`, `MalformedResponseSpamAssassinException`, `TruncatedResponseSpamAssassinException`, `ResponseTooLargeSpamAssassinException` | sealed classes         | The four failures actually thrown                                       |
+
+### ISpamAssassinClient
+
+```csharp
+public interface ISpamAssassinClient
+{
+    Version Ping();
+    Task<Version> PingAsync(CancellationToken cancellationToken = default);
+
+    void Skip();
+    Task SkipAsync(CancellationToken cancellationToken = default);
+
+    SpamVerdict Scan(Stream message);
+    SpamVerdict Scan(Stream message, long length);
+    SpamVerdict Scan(ReadOnlySequence<byte> message);
+    SpamVerdict Scan(ReadOnlyMemory<byte> message);
+    Task<SpamVerdict> ScanAsync(Stream message, CancellationToken cancellationToken = default);
+    Task<SpamVerdict> ScanAsync(Stream message, long length, CancellationToken cancellationToken = default);
+    Task<SpamVerdict> ScanAsync(ReadOnlySequence<byte> message, CancellationToken cancellationToken = default);
+    Task<SpamVerdict> ScanAsync(ReadOnlyMemory<byte> message, CancellationToken cancellationToken = default);
+
+    SymbolsResult Symbols(Stream message);
+    SymbolsResult Symbols(Stream message, long length);
+    SymbolsResult Symbols(ReadOnlySequence<byte> message);
+    SymbolsResult Symbols(ReadOnlyMemory<byte> message);
+    Task<SymbolsResult> SymbolsAsync(Stream message, CancellationToken cancellationToken = default);
+    Task<SymbolsResult> SymbolsAsync(Stream message, long length, CancellationToken cancellationToken = default);
+    Task<SymbolsResult> SymbolsAsync(ReadOnlySequence<byte> message, CancellationToken cancellationToken = default);
+    Task<SymbolsResult> SymbolsAsync(ReadOnlyMemory<byte> message, CancellationToken cancellationToken = default);
+
+    ReportResult Report(Stream message);
+    ReportResult Report(Stream message, long length);
+    ReportResult Report(ReadOnlySequence<byte> message);
+    ReportResult Report(ReadOnlyMemory<byte> message);
+    Task<ReportResult> ReportAsync(Stream message, CancellationToken cancellationToken = default);
+    Task<ReportResult> ReportAsync(Stream message, long length, CancellationToken cancellationToken = default);
+    Task<ReportResult> ReportAsync(ReadOnlySequence<byte> message, CancellationToken cancellationToken = default);
+    Task<ReportResult> ReportAsync(ReadOnlyMemory<byte> message, CancellationToken cancellationToken = default);
+
+    ReportResult ReportIfSpam(Stream message);
+    ReportResult ReportIfSpam(Stream message, long length);
+    ReportResult ReportIfSpam(ReadOnlySequence<byte> message);
+    ReportResult ReportIfSpam(ReadOnlyMemory<byte> message);
+    Task<ReportResult> ReportIfSpamAsync(Stream message, CancellationToken cancellationToken = default);
+    Task<ReportResult> ReportIfSpamAsync(Stream message, long length, CancellationToken cancellationToken = default);
+    Task<ReportResult> ReportIfSpamAsync(ReadOnlySequence<byte> message, CancellationToken cancellationToken = default);
+    Task<ReportResult> ReportIfSpamAsync(ReadOnlyMemory<byte> message, CancellationToken cancellationToken = default);
+
+    RewriteResult Process(Stream message, Stream destination);
+    RewriteResult Process(Stream message, long length, Stream destination);
+    RewriteResult Process(ReadOnlySequence<byte> message, Stream destination);
+    RewriteResult Process(ReadOnlyMemory<byte> message, Stream destination);
+    Task<RewriteResult> ProcessAsync(Stream message, Stream destination, CancellationToken cancellationToken = default);
+    Task<RewriteResult> ProcessAsync(Stream message, long length, Stream destination, CancellationToken cancellationToken = default);
+    Task<RewriteResult> ProcessAsync(ReadOnlySequence<byte> message, Stream destination, CancellationToken cancellationToken = default);
+    Task<RewriteResult> ProcessAsync(ReadOnlyMemory<byte> message, Stream destination, CancellationToken cancellationToken = default);
+
+    RewriteResult Headers(Stream message, Stream destination);
+    RewriteResult Headers(Stream message, long length, Stream destination);
+    RewriteResult Headers(ReadOnlySequence<byte> message, Stream destination);
+    RewriteResult Headers(ReadOnlyMemory<byte> message, Stream destination);
+    Task<RewriteResult> HeadersAsync(Stream message, Stream destination, CancellationToken cancellationToken = default);
+    Task<RewriteResult> HeadersAsync(Stream message, long length, Stream destination, CancellationToken cancellationToken = default);
+    Task<RewriteResult> HeadersAsync(ReadOnlySequence<byte> message, Stream destination, CancellationToken cancellationToken = default);
+    Task<RewriteResult> HeadersAsync(ReadOnlyMemory<byte> message, Stream destination, CancellationToken cancellationToken = default);
+
+    TellResult Tell(TellInstruction instruction, Stream message);
+    TellResult Tell(TellInstruction instruction, Stream message, long length);
+    TellResult Tell(TellInstruction instruction, ReadOnlySequence<byte> message);
+    TellResult Tell(TellInstruction instruction, ReadOnlyMemory<byte> message);
+    Task<TellResult> TellAsync(TellInstruction instruction, Stream message, CancellationToken cancellationToken = default);
+    Task<TellResult> TellAsync(TellInstruction instruction, Stream message, long length, CancellationToken cancellationToken = default);
+    Task<TellResult> TellAsync(TellInstruction instruction, ReadOnlySequence<byte> message, CancellationToken cancellationToken = default);
+    Task<TellResult> TellAsync(TellInstruction instruction, ReadOnlyMemory<byte> message, CancellationToken cancellationToken = default);
+}
+```
+
+That is the complete list: 60 methods. The blocking forms never take a `CancellationToken`; the `Async` forms always take one as their last parameter, defaulted. The destination comes _after_ the message (and after `length`); the instruction comes _before_ it.
+
+- `Ping` / `PingAsync` (`PING`): returns the protocol version from the daemon's status line, normally `1.5` (`SPAMD/1.5 0 PONG`). Sends no message and scans nothing; the cheapest health check, though it still costs a connection.
+- `Skip` / `SkipAsync` (`SKIP`): tells the daemon this connection has nothing for it, and reads no response. Exists for parity with the protocol; calling it is never required.
+- `Scan` / `ScanAsync` (`CHECK`): the verdict and nothing else. The right call for accept-or-reject.
+- `Symbols` / `SymbolsAsync` (`SYMBOLS`): the verdict plus the names of the rules that fired.
+- `Report` / `ReportAsync` (`REPORT`): the verdict plus SpamAssassin's prose report, always, ham or spam.
+- `ReportIfSpam` / `ReportIfSpamAsync` (`REPORT_IFSPAM`): the verdict, plus the report only when the message is spam; `Report` is `null` otherwise.
+- `Process` / `ProcessAsync` (`PROCESS`): the whole rewritten message (SpamAssassin's `X-Spam-*` headers added and, for spam, possibly the body rewritten, depending on the daemon's configuration) copied into `destination`.
+- `Headers` / `HeadersAsync` (`HEADERS`): as `Process`, but only the rewritten header block, ending after the blank line that separates headers from body. Requires protocol 1.4 or later.
+- `Tell` / `TellAsync` (`TELL`): learn, forget, report or revoke, as `instruction` says. No verdict. Requires `spamd --allow-tell`.
+
+Exceptions every method can throw: `ErrorResponseSpamAssassinException`, `MalformedResponseSpamAssassinException`, `TruncatedResponseSpamAssassinException`, `ResponseTooLargeSpamAssassinException`; whatever the connection source and the streams throw, unwrapped; `OperationCanceledException` from an `Async` form. Argument exceptions, thrown before any connection is opened:
+
+- `ArgumentNullException`: `message`, `destination` or `instruction` is `null`.
+- `ArgumentException`: a `Stream message` cannot be read; the single-argument `Stream` overload got a stream that cannot seek; `destination` cannot be written to.
+- `ArgumentOutOfRangeException`: `length` is negative.
+
+The `Stream message, long length` overloads also throw `EndOfStreamException` when the stream ends before `length` bytes were sent. That happens while writing, after the connection was opened; the connection is disposed without a response.
+
+### SpamAssassinClient
+
+```csharp
+public sealed class SpamAssassinClient : ISpamAssassinClient
+{
+    public SpamAssassinClient(ISpamAssassinConnectionSource connections, SpamAssassinClientOptions? options = null);
+
+    public SpamAssassinClient(
+        Func<ISpamAssassinConnection> connect,
+        Func<CancellationToken, Task<ISpamAssassinConnection>> connectAsync,
+        SpamAssassinClientOptions? options = null);
+
+    // Every ISpamAssassinClient member, implemented; nothing else is public.
+}
+```
+
+- Throws `ArgumentNullException` when `connections`, `connect` or `connectAsync` is `null`. `options: null` means `new SpamAssassinClientOptions()`.
+- Both delegates are required. A blocking call never waits on `connectAsync`, and an `Async` call never calls `connect`. A consumer who only ever uses one colour may pass `() => throw new NotSupportedException()` for the other.
+- **Not `IDisposable`.** It holds no connection between calls, so there is nothing to dispose; `using var client = new SpamAssassinClient(...)` does not compile.
+- Thread-safe and stateless per call. Register it as a singleton.
+
+### ISpamAssassinConnection
+
+```csharp
+public interface ISpamAssassinConnection : IDisposable, IAsyncDisposable
+{
+    Stream RequestStream { get; }
+
+    Stream ResponseStream { get; }
+
+    void CompleteRequest() => RequestStream.Flush();
+
+    Task CompleteRequestAsync(CancellationToken cancellationToken = default) => RequestStream.FlushAsync(cancellationToken);
+}
+```
+
+- The client writes the whole request to `RequestStream`, calls `CompleteRequest`/`CompleteRequestAsync` once, then reads the whole response from `ResponseStream`, then disposes the connection (`Dispose` from blocking calls, `DisposeAsync` from `Async` ones).
+- `CompleteRequest` has a default implementation that flushes. On a socket, override it to shut down the sending half (`Socket.Shutdown(SocketShutdown.Send)`): that is how the protocol expects a client to say it has finished writing. The override is an ordinary public method on the implementing class, as in the Quick start, or an explicit `ISpamAssassinConnection.CompleteRequest()` implementation.
+- A connection is used for exactly one command. It need not be reusable, and should not try to be.
+- An implementer must implement `Dispose` and `DisposeAsync`; they have no default.
+
+### ISpamAssassinConnectionSource
+
+```csharp
+public interface ISpamAssassinConnectionSource
+{
+    ISpamAssassinConnection Connect();
+
+    Task<ISpamAssassinConnection> ConnectAsync(CancellationToken cancellationToken = default);
+}
+```
+
+- Called once per command, possibly concurrently. Bound `Connect` with a connect timeout on the socket underneath; it takes no token on purpose.
+- The two-delegate `SpamAssassinClient` constructor is a shortcut for implementing this interface.
+- Whatever `Connect`/`ConnectAsync` throws propagates unwrapped; a `SocketException` from a refused connection stays a `SocketException`.
+
+### SpamAssassinClientOptions
+
+```csharp
+public sealed record SpamAssassinClientOptions
+{
+    public static readonly Version DefaultProtocolVersion;     // 1.5
+    public static readonly int DefaultMaxResponseHeadLength;   // 8 * 1024
+    public static readonly int DefaultMaxTextResponseLength;   // 1024 * 1024
+    public static readonly int DefaultTransferBufferSize;      // 16 * 1024
+
+    public string? User { get; init; }                         // default null
+    public bool CompressRequests { get; init; }                // default false
+    public Version ProtocolVersion { get; init; }              // default 1.5
+    public Encoding TextEncoding { get; init; }                // default Encoding.UTF8
+    public int MaxResponseHeadLength { get; init; }            // default 8 KiB
+    public int MaxTextResponseLength { get; init; }            // default 1 MiB
+    public int TransferBufferSize { get; init; }               // default 16 KiB
+}
+```
+
+The `init` accessors validate and throw on a bad value, at construction time:
+
+| Property                | Meaning                                                                                                                                                                                                                                                                                                                    | Throws                                                                                                  |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `User`                  | Sent as the `User:` header on every request; selects per-user configuration (rules, threshold, Bayes database) when spamd has it enabled. `null` sends no header. **Only `[-A-Za-z0-9_]` is allowed**, as spamd requires a traditional UNIX user name: an email address such as `rita.regression@example.com` is rejected. | `ArgumentException` for `""` or a character outside `[-A-Za-z0-9_]`                                     |
+| `CompressRequests`      | Sends the body zlib-compressed with `Compress: zlib`. spamd must allow compression or it refuses the request. Buffers every request whole, because `Content-length` must be the compressed length. Off by default; worth it over slow links only.                                                                          | -                                                                                                       |
+| `ProtocolVersion`       | The version the request announces. Lower it only for an old daemon: below 1.5 `PING` is undefined, below 1.4 `HEADERS` is, below 1.3 no verdict comes back with scanning commands (they then throw `MalformedResponseSpamAssassinException`).                                                                              | `ArgumentNullException` for `null`; `ArgumentOutOfRangeException` for anything but 1.2, 1.3, 1.4 or 1.5 |
+| `TextEncoding`          | How a report and a symbol list are decoded. Response headers are always Latin-1.                                                                                                                                                                                                                                           | `ArgumentNullException` for `null`                                                                      |
+| `MaxResponseHeadLength` | Most bytes the status line and headers may take together.                                                                                                                                                                                                                                                                  | `ArgumentOutOfRangeException` below 64                                                                  |
+| `MaxTextResponseLength` | Most bytes of a report or a symbol list. Does **not** apply to `Process`/`Headers`, which stream into the destination.                                                                                                                                                                                                     | `ArgumentOutOfRangeException` below 1                                                                   |
+| `TransferBufferSize`    | Size of the pooled buffers that move the message to the daemon and a rewritten one back.                                                                                                                                                                                                                                   | `ArgumentOutOfRangeException` below 512                                                                 |
+
+There is no host, port, timeout or retry setting: those belong to the transport the caller supplies. A `with` expression copies and revalidates: `options with { User = "postmaster" }`.
+
+### SpamVerdict
+
+```csharp
+public readonly record struct SpamVerdict(bool IsSpam, double Score, double Threshold);
+```
+
+- `IsSpam` is the daemon's own answer, not `Score >= Threshold` computed here. Use it rather than comparing the numbers.
+- `Score` can be negative. A message that is _not_ spam and scored exactly the threshold is reported at `Threshold - 0.1`, so a client comparing the numbers itself cannot call it spam.
+- `Threshold` is per daemon and per user, reported with every scan.
+
+### SymbolsResult
+
+```csharp
+public sealed record SymbolsResult(SpamVerdict Verdict, IReadOnlyList<string> Symbols)
+{
+    public bool Equals(SymbolsResult? other);
+    public override int GetHashCode();
+}
+```
+
+- `Symbols` are SpamAssassin rule names (`GTUBE`, `BAYES_99`, `MISSING_HEADERS`, ...) in the daemon's order; empty, never `null`, when no rule fired.
+- Equality is hand-written: same verdict and the same names in the same order. A record over a list would otherwise compare the list by reference.
+
+### ReportResult
+
+```csharp
+public sealed record ReportResult(SpamVerdict Verdict, string? Report);
+```
+
+- From `Report`/`ReportAsync`: `Report` is never `null`.
+- From `ReportIfSpam`/`ReportIfSpamAsync`: `Report` is `null` when the daemon sent no report, which is what it does for a message it does not call spam. Test `result.Report is null` or `result.Verdict.IsSpam`, not `string.IsNullOrEmpty` on one result type and not the other.
+- Trailing line breaks vary between spamd versions; trim before comparing.
+
+### RewriteResult
+
+```csharp
+public sealed record RewriteResult(SpamVerdict Verdict, long Length);
+```
+
+- `Length` is the number of bytes written to the destination stream. The rewritten message itself is **not** on the result: it is already in the destination.
+- When the daemon announced a length and sent fewer bytes, the call throws `TruncatedResponseSpamAssassinException` instead; whatever arrived before that is already in the destination.
+
+### TellResult
+
+```csharp
+public sealed record TellResult(TellDatabases Set, TellDatabases Removed);
+```
+
+- What the daemon reports it **actually** did (`DidSet`/`DidRemove`), which may be less than the instruction asked. A database spamd is not configured for, Bayes switched off, a message learned already, or forgetting a message it never learned all come back as a successful response with less set or removed. That is **not** an exception; compare against the instruction yourself.
+
+### TellInstruction
+
+```csharp
+public sealed record TellInstruction
+{
+    public static TellInstruction LearnAsSpam { get; }   // Spam, Set = Local
+    public static TellInstruction LearnAsHam { get; }    // Ham,  Set = Local
+    public static TellInstruction Forget { get; }        // no class, Remove = Local
+    public static TellInstruction ReportAsSpam { get; }  // Spam, Set = Local | Remote
+    public static TellInstruction RevokeAsHam { get; }   // Ham,  Set = Local, Remove = Remote
+
+    public MessageClass? MessageClass { get; }
+    public TellDatabases Set { get; }
+    public TellDatabases Remove { get; }
+
+    public static TellInstruction Create(MessageClass? messageClass, TellDatabases set, TellDatabases remove);
+}
+```
+
+- No public constructor: use one of the five properties, or `Create` for a combination they do not cover.
+- `Create` throws `ArgumentException` when `set` and `remove` are both `None`, or when `set` includes `Local` and `messageClass` is `null` (spamd would silently learn the message as ham). It throws `ArgumentOutOfRangeException` for an undeclared enum value.
+- On the wire: `Message-class: spam|ham`, `Set: local[, remote]`, `Remove: local[, remote]`.
+- `ReportAsSpam` and anything with `Remote` publish to the collaborative networks (Razor, Pyzor, DCC) the daemon is configured for. That leaves the machine; keep it for a person's deliberate decision.
+
+### TellDatabases
+
+```csharp
+[Flags]
+public enum TellDatabases
+{
+    None = 0,
+    Local = 1,   // this daemon's Bayes database
+    Remote = 2,  // the collaborative networks: Razor, Pyzor, DCC
+}
+```
+
+### MessageClass
+
+```csharp
+public enum MessageClass
+{
+    Spam,
+    Ham,
+}
+```
+
+### SpamAssassinResponseCode
+
+```csharp
+public enum SpamAssassinResponseCode
+{
+    Ok = 0,
+    Usage = 64,
+    DataError = 65,
+    NoInput = 66,
+    NoUser = 67,
+    NoHost = 68,
+    Unavailable = 69,   // e.g. TELL without spamd --allow-tell
+    Software = 70,
+    OsError = 71,
+    OsFile = 72,
+    CantCreate = 73,
+    IoError = 74,
+    TempFail = 75,      // retry later
+    Protocol = 76,      // the daemon found the request malformed
+    NoPermission = 77,
+    Config = 78,
+    Timeout = 79,       // spamd's own addition; retry later
+}
+```
+
+The `sysexits.h` values. The daemon may send a code not declared here; it still arrives as an `ErrorResponseSpamAssassinException` whose `Code` is the undeclared value, so a `switch` over it needs a default arm. `Ok` is never seen on an exception.
+
+### SpamAssassinException
+
+```csharp
+public abstract class SpamAssassinException : Exception
+{
+    protected SpamAssassinException(string message);
+    protected SpamAssassinException(string message, Exception? innerException);
+}
+```
+
+Catch it to mean "the daemon's side failed"; catch a derived type when the difference matters. Never thrown for the caller's own arguments or streams.
+
+### ErrorResponseSpamAssassinException
+
+```csharp
+public sealed class ErrorResponseSpamAssassinException : SpamAssassinException
+{
+    public ErrorResponseSpamAssassinException(SpamAssassinResponseCode code, string responseText);
+
+    public SpamAssassinResponseCode Code { get; }
+    public string ResponseText { get; }   // the text after the code, e.g. "EX_UNAVAILABLE"
+}
+```
+
+The daemon answered and refused. Only `Code == TempFail` and `Code == Timeout` are worth retrying unchanged.
+
+### MalformedResponseSpamAssassinException
+
+```csharp
+public sealed class MalformedResponseSpamAssassinException : SpamAssassinException
+{
+    public MalformedResponseSpamAssassinException(string message);
+}
+```
+
+What came back is not a spamd response: a status line not starting `SPAMD/`, a header without a colon, a score that is not a number, a scanning command answered without a `Spam:` header. Almost always the wrong endpoint (an HTTP server, a TLS port read as plain text). Do not retry; fix the address.
+
+### TruncatedResponseSpamAssassinException
+
+```csharp
+public sealed class TruncatedResponseSpamAssassinException : SpamAssassinException
+{
+    public TruncatedResponseSpamAssassinException(string message, long? announcedLength, long receivedLength);
+
+    public long? AnnouncedLength { get; }   // null when the connection closed before any response
+    public long ReceivedLength { get; }
+}
+```
+
+The connection closed without a response, or the body ended before the announced `Content-length`. The failure most worth a retry.
+
+### ResponseTooLargeSpamAssassinException
+
+```csharp
+public sealed class ResponseTooLargeSpamAssassinException : SpamAssassinException
+{
+    public ResponseTooLargeSpamAssassinException(string message, long limit);
+
+    public long Limit { get; }   // the option value that was exceeded, in bytes
+}
+```
+
+The response passed `MaxResponseHeadLength` or `MaxTextResponseLength`. Either the daemon is misbehaving or the limit is set below what this daemon legitimately produces; raise the limit or investigate, a plain retry does not help.
+
+## Choosing a command
+
+| You want                                                      | Call                                                                 | Returns                                   |
+| ------------------------------------------------------------- | -------------------------------------------------------------------- | ----------------------------------------- |
+| Is it spam? (accept/reject, tagging a subject)                | `ScanAsync`                                                          | `SpamVerdict`                             |
+| Why did it score that? (logs, metrics per rule)               | `SymbolsAsync`                                                       | `SymbolsResult`                           |
+| Human-readable explanation for every message                  | `ReportAsync`                                                        | `ReportResult`, `Report` never `null`     |
+| Explanation only for spam, nothing for ham                    | `ReportIfSpamAsync`                                                  | `ReportResult`, `Report` `null` for ham   |
+| The marked-up message to deliver or store                     | `ProcessAsync(message, destination)`                                 | `RewriteResult`; message in `destination` |
+| Only SpamAssassin's headers, to merge into a message you keep | `HeadersAsync(message, destination)`                                 | `RewriteResult`; headers in `destination` |
+| A user moved a message to Junk                                | `TellAsync(TellInstruction.LearnAsSpam, ...)`                        | `TellResult`                              |
+| A user moved it out of Junk again                             | `TellAsync(TellInstruction.Forget, ...)` then `LearnAsHam` if wanted | `TellResult`                              |
+| Health check                                                  | `PingAsync`                                                          | `Version`                                 |
+
+Every scanning command costs the daemon a full scan; pick the one whose answer you need rather than calling two.
+
+## Contract expectations
+
+- **One connection per call, disposed before the call returns**, including when it throws. The client never caches, pools or reuses a connection. Pooling, if any, belongs behind `ISpamAssassinConnectionSource`, and a pooled connection still has to survive being disposed by the client, which a socket spamd has closed cannot.
+- **A connection that fails to open is the source's to dispose.** The client only disposes connections it was handed.
+- **The message stream is read from its current position**, never rewound before or after. With the single-argument `Stream` overload, the length sent is `Length - Position`; afterwards the position is at the end.
+- **An explicit `length` must be exact.** A stream that ends before `length` bytes throws `EndOfStreamException` (the daemon is left waiting for bytes that never come). A stream longer than `length` is cut at `length`; the rest is not sent.
+- **The destination stream is written from its current position, not closed and not rewound.** Seek it back to 0 before reading what was written into a `MemoryStream`.
+- **Cancellation** is honoured between reads and writes, not during one. A blocking call takes no token; bound it with `ReceiveTimeout`/`SendTimeout` on the socket, which is the only thing that interrupts a blocking read.
+- **Concurrency:** calls on one client may overlap freely; each gets its own connection. The source must then tolerate concurrent `Connect` calls.
+- **Exceptions are never swallowed.** A `TELL` that changed nothing, a ham message from `ReportIfSpam`, and an empty symbol list are successful results, not errors.
+- **What spamd must be started with:** `--allow-tell` for `Tell`; the ability to decompress zlib for `CompressRequests` (it refuses a compressed request otherwise); `--listen`/`--allowed-ips` for any remote client. A refused `TELL` arrives as `ErrorResponseSpamAssassinException` (`Code` usually `Unavailable`).
+- **Size:** the library imposes no limit on the message it sends. SpamAssassin's own `spamc` passes messages above 500 KiB through unscanned by default (its `-s` option) and never sends more than 256 MiB, because large messages are slow to scan and rarely spam. Apply a cap of your own before calling.
+
+## Usage
+
+### Scanning a file without loading it into memory
+
+```csharp
+using System.IO;
+using System.Threading.Tasks;
+using Josupeit.Mail.SpamAssassin.Client;
+
+internal static class FileScanning
+{
+    public static async Task<bool> IsSpamAsync(ISpamAssassinClient client, string path)
+    {
+        // A FileStream can seek, so the length is read from it; nothing is buffered.
+        await using var message = File.OpenRead(path);
+
+        var verdict = await client.ScanAsync(message);
+
+        return verdict.IsSpam;
+    }
+}
+```
+
+### A non-seekable stream whose length is known
+
+```csharp
+using System.IO;
+using System.Threading.Tasks;
+using Josupeit.Mail.SpamAssassin.Client;
+
+internal static class KnownLength
+{
+    // For example a network stream or a decompression stream, where the sender told you the size up front.
+    public static Task<SpamVerdict> ScanAsync(ISpamAssassinClient client, Stream message, long length) =>
+        client.ScanAsync(message, length);
+}
+```
+
+Without a known length, copy the message into a `MemoryStream` (or a byte array) first; the library will not guess.
+
+### Rules that fired
+
+```csharp
+using System;
+using System.Threading.Tasks;
+using Josupeit.Mail.SpamAssassin.Client;
+
+internal static class RuleLogging
+{
+    public static async Task LogRulesAsync(ISpamAssassinClient client, ReadOnlyMemory<byte> message)
+    {
+        var result = await client.SymbolsAsync(message);
+
+        Console.WriteLine($"{result.Verdict.Score}/{result.Verdict.Threshold}: {string.Join(", ", result.Symbols)}");
+    }
+}
+```
+
+### Report only for spam
+
+```csharp
+using System;
+using System.Threading.Tasks;
+using Josupeit.Mail.SpamAssassin.Client;
+
+internal static class SpamReports
+{
+    public static async Task<string?> ExplainIfSpamAsync(ISpamAssassinClient client, ReadOnlyMemory<byte> message)
+    {
+        var result = await client.ReportIfSpamAsync(message);
+
+        // null for a message the daemon did not call spam: it sends no report at all then.
+        return result.Report?.TrimEnd();
+    }
+}
+```
+
+### Writing the rewritten message
+
+```csharp
+using System.IO;
+using System.Threading.Tasks;
+using Josupeit.Mail.SpamAssassin.Client;
+
+internal static class Marking
+{
+    public static async Task<bool> MarkAsync(ISpamAssassinClient client, string inputPath, string outputPath)
+    {
+        await using var message = File.OpenRead(inputPath);
+        await using var destination = File.Create(outputPath);
+
+        RewriteResult result = await client.ProcessAsync(message, destination);
+
+        // result.Length bytes are now in outputPath; the result carries no copy of them.
+        return result.Verdict.IsSpam;
+    }
+
+    public static async Task<byte[]> HeadersOnlyAsync(ISpamAssassinClient client, byte[] message)
+    {
+        using var destination = new MemoryStream();
+
+        await client.HeadersAsync(message, destination);
+
+        // Not rewound by the client; ToArray ignores the position anyway.
+        return destination.ToArray();
+    }
+}
+```
+
+### Teaching the Bayes database
+
+```csharp
+using System;
+using System.Threading.Tasks;
+using Josupeit.Mail.SpamAssassin.Client;
+
+internal static class JunkFolder
+{
+    public static async Task MovedToJunkAsync(ISpamAssassinClient client, ReadOnlyMemory<byte> message)
+    {
+        TellResult result = await client.TellAsync(TellInstruction.LearnAsSpam, message);
+
+        // Not an exception: the daemon reports what it did. Nothing set means Bayes is off, or it already knew this one.
+        if (!result.Set.HasFlag(TellDatabases.Local))
+            Console.WriteLine("The daemon learned nothing from this message.");
+    }
+
+    public static async Task MovedOutOfJunkAsync(ISpamAssassinClient client, ReadOnlyMemory<byte> message)
+    {
+        await client.TellAsync(TellInstruction.Forget, message);
+        await client.TellAsync(TellInstruction.LearnAsHam, message);
+    }
+
+    // A combination the named instructions do not cover: withdraw a report without learning anything locally.
+    public static Task<TellResult> WithdrawReportAsync(ISpamAssassinClient client, ReadOnlyMemory<byte> message) =>
+        client.TellAsync(TellInstruction.Create(MessageClass.Ham, TellDatabases.None, TellDatabases.Remote), message);
+}
+```
+
+### Options
+
+```csharp
+using Josupeit.Mail.SpamAssassin.Client;
+
+var options = new SpamAssassinClientOptions
+{
+    // A UNIX user name on the daemon's host, not an email address: only [-A-Za-z0-9_] is accepted.
+    User = "vera_vendetta",
+    CompressRequests = true,
+    MaxTextResponseLength = 256 * 1024,
+};
+
+var client = new SpamAssassinClient(new SpamdConnections(), options);
+```
+
+`SpamdConnections` stands for any `ISpamAssassinConnectionSource` implementation, such as the one below. There is no per-call options overload: one client per user is the way to scan for several users.
+
+### Unix domain socket, with timeouts for the blocking colour
+
+spamd started with `--socketpath=/var/run/spamd.sock` is reached over a `Socket`, not a `TcpClient`:
+
+```csharp
+using System.IO;
+using System.Net;
+using System.Net.Sockets;
+using System.Threading;
+using System.Threading.Tasks;
+using Josupeit.Mail.SpamAssassin.Client;
+
+internal sealed class SpamdConnection(Socket socket) : ISpamAssassinConnection
+{
+    private readonly NetworkStream _stream = new(socket, ownsSocket: true);
+
+    public Stream RequestStream => _stream;
+
+    public Stream ResponseStream => _stream;
+
+    public void CompleteRequest() => socket.Shutdown(SocketShutdown.Send);
+
+    public Task CompleteRequestAsync(CancellationToken cancellationToken = default)
+    {
+        CompleteRequest();
+
+        return Task.CompletedTask;
+    }
+
+    public void Dispose() => _stream.Dispose();
+
+    public ValueTask DisposeAsync() => _stream.DisposeAsync();
+}
+
+internal sealed class SpamdConnections : ISpamAssassinConnectionSource
+{
+    private static readonly EndPoint _endPoint = new UnixDomainSocketEndPoint("/var/run/spamd.sock");
+
+    public ISpamAssassinConnection Connect()
+    {
+        var socket = NewSocket();
+
+        try
+        {
+            socket.Connect(_endPoint);
+
+            return new SpamdConnection(socket);
+        }
+        catch
+        {
+            socket.Dispose();
+
+            throw;
+        }
+    }
+
+    public async Task<ISpamAssassinConnection> ConnectAsync(CancellationToken cancellationToken = default)
+    {
+        var socket = NewSocket();
+
+        try
+        {
+            await socket.ConnectAsync(_endPoint, cancellationToken);
+
+            return new SpamdConnection(socket);
+        }
+        catch
+        {
+            socket.Dispose();
+
+            throw;
+        }
+    }
+
+    private static Socket NewSocket() =>
+        // The timeouts bound the blocking methods, which take no CancellationToken.
+        new(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified) { SendTimeout = 30_000, ReceiveTimeout = 30_000 };
+}
+```
+
+For TCP, use `new Socket(SocketType.Stream, ProtocolType.Tcp)` and `new DnsEndPoint("spamd.example.com", 783)` in the same class.
+
+### Dependency injection, by hand
+
+```csharp
+using Josupeit.Mail.SpamAssassin.Client;
+using Microsoft.Extensions.DependencyInjection;
+
+internal static class Registration
+{
+    public static IServiceCollection AddSpamd(this IServiceCollection services) =>
+        services
+            .AddSingleton<ISpamAssassinConnectionSource, SpamdConnections>()
+            .AddSingleton(new SpamAssassinClientOptions { User = "mailfilter" })
+            .AddSingleton<ISpamAssassinClient>(provider => new SpamAssassinClient(
+                provider.GetRequiredService<ISpamAssassinConnectionSource>(),
+                provider.GetRequiredService<SpamAssassinClientOptions>()));
+}
+```
+
+The package has no DI extension of its own and no dependency on `Microsoft.Extensions.DependencyInjection`; the reference above is the application's.
+
+### Retrying what is worth retrying
+
+```csharp
+using System;
+using System.IO;
+using System.Net.Sockets;
+using System.Threading;
+using System.Threading.Tasks;
+using Josupeit.Mail.SpamAssassin.Client;
+
+internal static class Retrying
+{
+    public static async Task<SpamVerdict?> ScanOrGiveUpAsync(ISpamAssassinClient client, ReadOnlyMemory<byte> message, CancellationToken cancellationToken)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                return await client.ScanAsync(message, cancellationToken);
+            }
+            catch (Exception exception) when (attempt < 3 && IsTransient(exception))
+            {
+                await Task.Delay(TimeSpan.FromSeconds(attempt), cancellationToken);
+            }
+            catch (SpamAssassinException)
+            {
+                // Refused for good, or not a spamd at all: deliver unscanned rather than lose mail.
+                return null;
+            }
+        }
+    }
+
+    private static bool IsTransient(Exception exception) => exception switch
+    {
+        TruncatedResponseSpamAssassinException => true,
+        ErrorResponseSpamAssassinException { Code: SpamAssassinResponseCode.TempFail or SpamAssassinResponseCode.Timeout } => true,
+        IOException or SocketException => true,
+        _ => false,
+    };
+}
+```
+
+`MalformedResponseSpamAssassinException` and `ResponseTooLargeSpamAssassinException` will fail the same way again. `ArgumentException` and its subclasses are the caller's bug.
+
+### Testing code that uses the client
+
+Depend on `ISpamAssassinClient` and substitute it, or keep the real client and give it connections over `MemoryStream`s holding a canned spamd response:
+
+```csharp
+using System.IO;
+using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
+using Josupeit.Mail.SpamAssassin.Client;
+
+internal sealed class CannedConnection(string response) : ISpamAssassinConnection
+{
+    public Stream RequestStream { get; } = new MemoryStream();
+
+    public Stream ResponseStream { get; } = new MemoryStream(Encoding.ASCII.GetBytes(response));
+
+    public void Dispose()
+    {
+    }
+
+    public ValueTask DisposeAsync() => default;
+}
+
+internal static class CannedDaemon
+{
+    // What spamd answers to CHECK for a message carrying the GTUBE test pattern.
+    public const string SPAM = "SPAMD/1.1 0 EX_OK\r\nContent-length: 0\r\nSpam: True ; 1000.0 / 5.0\r\n\r\n";
+
+    public static SpamAssassinClient Client(string response) => new(
+        () => new CannedConnection(response),
+        _ => Task.FromResult<ISpamAssassinConnection>(new CannedConnection(response)));
+}
+```
+
+To make a _real_ spamd call a message spam, put the GTUBE string from https://spamassassin.apache.org/gtube/ in its body: it scores 1000.
+
+## Protocol notes a caller may meet
+
+- The response's `Spam:` header reads `True`/`False` for every scanning command except `REPORT_IFSPAM`, which writes `Yes`/`No`. The library accepts all four, case-insensitively; a caller never sees the difference.
+- The score is formatted `%2.1f` and parsed with the invariant culture, so a German or French machine reads `6.6` correctly.
+- `PING` answers `SPAMD/1.5 0 PONG`; `PingAsync` returns that `1.5` as a `Version`, not the string `PONG` and not a `bool`. A daemon that is down shows up as the transport's exception (`SocketException`), not as a `false`.
+- `TELL` responses end with an extra blank line, and `SYMBOLS`/`REPORT` bodies end with a varying number of line breaks. The library tolerates both.
+- `HEADERS` needs protocol 1.4 and `PING` 1.5, both satisfied by the default `ProtocolVersion`.
+- Response headers may repeat; unknown headers are ignored, so a newer spamd adding one does not break this client.
+- The authority on the protocol is `spamd/PROTOCOL` in https://github.com/apache/spamassassin; where it and spamd disagree, this library follows spamd.
+
+## Common mistakes
+
+- **Looking for a host/port API.** There is no `new SpamAssassinClient("localhost", 783)`, no `SpamAssassinClient.Connect`, no `ConnectionString` option. Write an `ISpamAssassinConnection` (Quick start) and pass a source or two delegates.
+- **Opening one connection and reusing it.** spamd closes after one command. Return a new connection from every `Connect`/`ConnectAsync` call; never cache one in a field.
+- **Passing a single delegate.** The delegate constructor needs both `connect` and `connectAsync`; there is no overload with only one.
+- **Disposing the client.** `SpamAssassinClient` is not `IDisposable`; there is nothing to dispose.
+- **Passing a `CancellationToken` to a blocking method.** `Scan(message, token)` does not compile: no blocking method takes a token. Use `ScanAsync` for cancellation, socket timeouts for the blocking form.
+- **Expecting a different method name.** It is `ScanAsync`, not `CheckAsync`, `CheckSpamAsync` or `IsSpamAsync`; `TellAsync`, not `LearnAsync`/`LearnSpamAsync`; `ReportIfSpamAsync`, not `ReportIfSpamOnlyAsync`. Learning and forgetting are `TellInstruction`s, not methods.
+- **Passing a non-seekable stream to the one-argument `Stream` overload.** It throws `ArgumentException` before connecting. Pass the length, or read the message into memory.
+- **Expecting the rewritten message on the result.** `ProcessAsync` and `HeadersAsync` take a destination `Stream` and return a `RewriteResult` without content. There is no `ProcessAsync(message)` returning a string or a stream.
+- **Reading a `MemoryStream` destination without seeking.** After `ProcessAsync(message, destination)`, `destination.Position` is at the end; `Seek(0, SeekOrigin.Begin)` before reading, or use `ToArray()`.
+- **Treating `ReportIfSpam`'s `null` report as a failure.** It is the answer for ham.
+- **Treating an unchanged `TellResult` as success.** `TellAsync` does not throw when the daemon changed nothing; inspect `Set`/`Removed`.
+- **Calling `Tell` against a daemon without `--allow-tell`.** It throws `ErrorResponseSpamAssassinException` (`Unavailable`), not a silent no-op.
+- **Setting `User` to an email address.** `rita.regression@example.com` throws `ArgumentException` from the options initializer; spamd user names are `[-A-Za-z0-9_]` only.
+- **Computing spam from `Score >= Threshold`.** Use `IsSpam`; the daemon may decide differently, and it lowers a ham score that landed on the threshold.
+- **Catching `SpamAssassinException` around connection failures.** A refused or dropped TCP connection is a `SocketException`/`IOException`, never wrapped.
+- **Expecting an `ILogger`, `IOptions<SpamAssassinClientOptions>` or `AddSpamAssassinClient()` extension.** None exist; see "Dependency injection, by hand".
+- **Assuming a `libspamc`-style API.** There is no `message_filter`, `transport_setup` or `EX_*` integer return; results are types and failures are exceptions.
+
+## Related
+
+- [Package README](https://codeberg.org/DerPeit/Josupeit.Mail.SpamAssassin.Client/raw/branch/main/src/Josupeit.Mail.SpamAssassin.Client/README.md): the human-oriented guide shown on NuGet.
+- [spamc sample](https://codeberg.org/DerPeit/Josupeit.Mail.SpamAssassin.Client/src/branch/main/samples/Spamc): a working equivalent of SpamAssassin's `spamc` built on this library, including exit codes and the safe-fallback policy.
+- [Source code](https://codeberg.org/DerPeit/Josupeit.Mail.SpamAssassin.Client/src/branch/main/src/Josupeit.Mail.SpamAssassin.Client): the library on Codeberg.
+- [NuGet package](https://www.nuget.org/packages/Josupeit.Mail.SpamAssassin.Client): release history.
+- [spamd protocol](https://github.com/apache/spamassassin/blob/trunk/spamd/PROTOCOL): SpamAssassin's own description of the wire format.
+
+## License
+
+EUPL-1.2. Full text: https://codeberg.org/DerPeit/Josupeit.Mail.SpamAssassin.Client/raw/branch/main/LICENSE.md
