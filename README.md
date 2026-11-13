@@ -33,6 +33,10 @@ dotnet run --project samples/Spamc -- -c -d spamd.example.com < message.eml
 
 It exists to show the parts a consumer has to supply - the socket, the exit codes, and what to do when the daemon is not there - and it is the shortest answer to "how do I use this". Its readme lists the `spamc` options it deliberately does not implement.
 
+## Documentation for LLMs
+
+The package ships an `llms.txt` index and a self-contained `llms-full.txt` reference ([llmstxt.org](https://llmstxt.org/) format), inside the NuGet package and next to its README in [`src/Josupeit.Mail.SpamAssassin.Client`](src/Josupeit.Mail.SpamAssassin.Client). The root [`llms.txt`](llms.txt) is the index for the repository, and [`context7.json`](context7.json) configures [Context7](https://context7.com/), which indexes the released documentation on `main`. Point a coding agent at `llms-full.txt` before letting it write code against the client: it carries every public declaration, the connection recipes the library leaves to you, and the mistakes an agent predictably makes against this library.
+
 ## Building and testing
 
 ```bash
