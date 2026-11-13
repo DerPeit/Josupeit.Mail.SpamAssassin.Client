@@ -1,0 +1,45 @@
+name: Context7
+
+# Context7 indexes main - context7.json pins "branch": "main", because develop is the default branch
+# here and its documentation may describe what has not been released yet. So the index only needs a
+# refresh when main moves, which is a pushed release merge; a push to develop leaves it untouched.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  refresh:
+    runs-on: codeberg-medium-lazy
+    container:
+      image: mcr.microsoft.com/dotnet/sdk:10.0
+    steps:
+      # The response is printed on a line of its own: it carries no trailing newline, and the runner
+      # drops an unterminated last line, which is how a 400 once reached the log without its reason.
+      #
+      # Context7 allows one refresh per ten days, and claiming the library or refreshing it by hand
+      # counts as one. A release shortly after either is refused with "too-early", which is a
+      # warning rather than a failure: the index is merely a few days staler than it could be, and a
+      # manual run of this workflow catches up once the ten days are over.
+      - name: Refresh Context7 library
+        run: |
+          status=$(curl --silent --show-error --output response.json --write-out '%{http_code}' \
+            -X POST https://context7.com/api/v1/refresh \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${{ secrets.CONTEXT7_API_KEY }}" \
+            -d '{"libraryName": "/git_codeberg_org/derpeit_josupeit.mail.spamassassin.client"}')
+
+          echo "HTTP $status"
+          cat response.json
+          echo
+
+          if [ "$status" = 200 ]; then
+            exit 0
+          fi
+
+          if grep -q '"too-early"' response.json; then
+            echo "::warning::Context7 refused the refresh as too early; run this workflow by hand once ten days have passed since the last one."
+            exit 0
+          fi
+
+          exit 1
