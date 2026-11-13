@@ -1,0 +1,25 @@
+# Josupeit.Mail.SpamAssassin.Client
+
+> A .NET client for spamc/spamd, the protocol SpamAssassin's scanning daemon speaks, so a mail pipeline written in C# can ask a local or remote `spamd` whether a message is spam, why, and what the marked-up message looks like, and can teach its Bayes database. One NuGet package, `Josupeit.Mail.SpamAssassin.Client`, targeting net8.0. The library owns no transport: the caller supplies the streams. Licensed under EUPL-1.2. The package ships its own `llms.txt` and `llms-full.txt`; this file is the index for the repository.
+
+Install with `dotnet add package Josupeit.Mail.SpamAssassin.Client`. Facts LLMs predictably get wrong about this library:
+
+- There is no host/port constructor and no built-in TCP code. Implement `ISpamAssassinConnection` (two streams plus disposal) and hand `SpamAssassinClient` an `ISpamAssassinConnectionSource` or a `connect`/`connectAsync` delegate pair. Every call gets a fresh connection, because spamd serves one command per connection.
+- The methods are `ScanAsync` (CHECK), `SymbolsAsync`, `ReportAsync`, `ReportIfSpamAsync`, `ProcessAsync`, `HeadersAsync`, `TellAsync`, `PingAsync`, `SkipAsync`, each with a blocking twin that takes no `CancellationToken`.
+- `ProcessAsync`/`HeadersAsync` write into a destination stream you pass and return only the verdict and the byte count.
+- Learning and forgetting are `TellAsync(TellInstruction.LearnAsSpam, message)` and friends; a `TELL` that changed nothing is reported in `TellResult`, not thrown.
+- No `Microsoft.Extensions.*` integration: no `AddSpamAssassin...`, no `ILogger`, no `IOptions`.
+- Load the package's `llms-full.txt` before writing code; do not infer members that are not listed there.
+
+## Package
+
+- [Josupeit.Mail.SpamAssassin.Client](https://codeberg.org/DerPeit/Josupeit.Mail.SpamAssassin.Client/raw/branch/main/src/Josupeit.Mail.SpamAssassin.Client/llms-full.txt): the complete reference - `ISpamAssassinClient`, `SpamAssassinClient`, `ISpamAssassinConnection`, `ISpamAssassinConnectionSource`, `SpamAssassinClientOptions`, the result types, `TellInstruction`, the enums and the exceptions, with connection recipes and common mistakes.
+
+## Optional
+
+- [Repository README](https://codeberg.org/DerPeit/Josupeit.Mail.SpamAssassin.Client/raw/branch/main/README.md): human-oriented overview, building and testing.
+- [Package README](https://codeberg.org/DerPeit/Josupeit.Mail.SpamAssassin.Client/raw/branch/main/src/Josupeit.Mail.SpamAssassin.Client/README.md): the guide shown on NuGet.
+- [spamc sample](https://codeberg.org/DerPeit/Josupeit.Mail.SpamAssassin.Client/src/branch/main/samples/Spamc): a working equivalent of SpamAssassin's `spamc`, over TCP or a Unix domain socket.
+- [Source code](https://codeberg.org/DerPeit/Josupeit.Mail.SpamAssassin.Client): the repository on Codeberg.
+- [NuGet package](https://www.nuget.org/packages/Josupeit.Mail.SpamAssassin.Client): release history.
+- [License](https://codeberg.org/DerPeit/Josupeit.Mail.SpamAssassin.Client/raw/branch/main/LICENSE.md): EUPL-1.2 full text.
