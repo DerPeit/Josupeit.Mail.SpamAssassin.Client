@@ -1,5 +1,9 @@
 # Josupeit.Mail.SpamAssassin.Client
 
+> [!NOTE]
+> Development happens on [Codeberg](https://codeberg.org/DerPeit/Josupeit.Mail.SpamAssassin.Client).
+> Copies elsewhere (e.g. GitHub) are read-only mirrors; please open issues and pull requests on Codeberg.
+
 A .NET client for **spamc/spamd** - the HTTP-like protocol SpamAssassin's scanning daemon speaks - so a mail pipeline written in C# can ask a local or remote `spamd` what it thinks of a message.
 
 Hand over a message and get back what the command asked for: a spam verdict with score and threshold, the list of rules that hit, the human-readable report, or the rewritten message with SpamAssassin's markup in it. Bayes learning, forgetting, reporting and revoking are covered too, through the `TELL` command.
